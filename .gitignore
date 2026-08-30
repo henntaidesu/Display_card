@@ -1,0 +1,31 @@
+# ===== 引导配置：含 MySQL 密码，绝不提交 =====
+conf.ini
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ===== PyInstaller =====
+build/
+dist/
+Releases/
+*.manifest
+
+# ===== 前端 =====
+webside/node_modules/
+webside/dist/
+webside/.vite/
+
+# ===== 运行时数据 =====
+backend/data/
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+conf.ini

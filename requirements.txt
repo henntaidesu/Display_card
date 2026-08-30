@@ -1,0 +1,10 @@
+# Display Card Manager 后端依赖（Python 3.12 / conda 环境 displayCard）
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+python-multipart==0.0.32
+PyMySQL==1.2.0
+cryptography==46.0.7
+PyJWT==2.10.1
+bcrypt==5.0.0
+requests==2.32.3
