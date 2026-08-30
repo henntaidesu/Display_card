@@ -106,7 +106,11 @@ def _dec(value: Any) -> Optional[Decimal]:
 
 
 def _to_cny(amount: Any, currency: str, rate: Any) -> Optional[Decimal]:
-    """把一笔金额折成人民币。JPY 需要汇率，CNY 原样返回。"""
+    """把一笔金额折成人民币。JPY 需要汇率，CNY 原样返回。
+
+    rate 是「1 人民币 = rate 日元」（约 23.76，与实际换汇口径一致）。所以日元金额换人民币
+    是**除以** rate，而不是乘：390000 日元 ÷ 23.165 = 16836 元。
+    """
     amount = _dec(amount)
     if amount is None:
         return None
@@ -115,7 +119,7 @@ def _to_cny(amount: Any, currency: str, rate: Any) -> Optional[Decimal]:
     rate = _dec(rate)
     if rate is None or rate <= 0:
         return None  # 汇率还没取到：宁可显示「—」，也不要拿一个错的数字去凑
-    return amount * rate
+    return amount / rate
 
 
 def _round(value: Optional[Decimal]) -> Optional[float]:

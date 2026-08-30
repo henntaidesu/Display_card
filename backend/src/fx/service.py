@@ -23,8 +23,11 @@ from src.fx.providers import ProviderError, get_provider
 
 log = logging.getLogger(__name__)
 
-BASE = "JPY"
-QUOTE = "CNY"
+# 汇率方向：以人民币为基准，rate = 「1 人民币 = 多少日元」（约 23.76）。
+# 这与用户实际换汇的口径一致（例如 23.165 日元换 1 元）。换算成本时用日元金额除以它。
+# 历史上曾用 JPY→CNY（0.042）的反向口径，改这里之前先想清楚 cards._to_cny 的除法方向。
+BASE = "CNY"
+QUOTE = "JPY"
 
 SETTING_SOURCE = "fx_source"
 SETTING_AUTO = "fx_auto_fetch"
@@ -148,11 +151,11 @@ def convert(
     to_currency: str,
     rate: Optional[Decimal | float],
 ) -> Optional[Decimal]:
-    """按给定的 JPY→CNY 汇率换算金额。
+    """按给定汇率换算金额。
 
-    只认 JPY 和 CNY 两种币，且 ``rate`` 恒定是「1 JPY = ? CNY」。传进来的 rate 一律是
-    卡片行上存好的快照，这个函数**不去取汇率**——利润展示必须完全由行内数据决定，
-    否则同一条记录在不同时刻会算出不同的利润。
+    只认 JPY 和 CNY 两种币，且 ``rate`` 恒定是「1 人民币 = ? 日元」（约 23.76）。传进来的
+    rate 一律是卡片行上存好的快照，这个函数**不去取汇率**——利润展示必须完全由行内数据
+    决定，否则同一条记录在不同时刻会算出不同的利润。
     """
     if amount is None:
         return None
@@ -166,8 +169,9 @@ def convert(
     rate = Decimal(str(rate))
     if rate <= 0:
         return None
+    # rate = 1 人民币 = rate 日元。日元→人民币要除，人民币→日元要乘。
     if from_currency == "JPY" and to_currency == "CNY":
-        return amount * rate
-    if from_currency == "CNY" and to_currency == "JPY":
         return amount / rate
+    if from_currency == "CNY" and to_currency == "JPY":
+        return amount * rate
     return None

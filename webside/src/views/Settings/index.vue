@@ -2,27 +2,24 @@
   <div class="settings-page">
     <h2 class="page-title">{{ t('settings.title') }}</h2>
 
-    <el-tabs v-model="activeTab" class="settings-tabs">
+    <div class="settings-stack">
       <!-- 图床 -->
-      <el-tab-pane :label="t('settings.tabImageHosting')" name="hosting">
+      <section class="settings-section">
+        <h3 class="section-heading">{{ t('settings.tabImageHosting') }}</h3>
         <el-card shadow="never" class="pane-card">
           <el-form label-width="150px" label-position="left" class="cfg-form">
             <el-form-item :label="t('settings.baseUrl')">
-              <el-input v-model="hosting.base_url" placeholder="http://127.0.0.1:9990" />
-              <div class="hint">{{ t('settings.baseUrlHint') }}</div>
+              <el-input v-model="hosting.base_url" />
             </el-form-item>
             <el-form-item :label="t('settings.publicBase')">
-              <el-input v-model="hosting.public_base" placeholder="https://images.example.com" />
-              <div class="hint">{{ t('settings.publicBaseHint') }}</div>
+              <el-input v-model="hosting.public_base" />
             </el-form-item>
             <el-form-item :label="t('settings.project')">
-              <el-input v-model="hosting.project" placeholder="displaycard" />
-              <div class="hint">{{ t('settings.projectHint') }}</div>
+              <el-input v-model="hosting.project" />
             </el-form-item>
             <el-form-item :label="t('settings.token')">
               <el-input v-model="hosting.token" type="password" show-password
-                :placeholder="hosting.token_set ? '••••••（' + t('settings.tokenSet') + '）' : t('settings.tokenUnset')" />
-              <div class="hint">{{ t('settings.tokenHint') }}</div>
+                :placeholder="hosting.token_set ? '••••••（' + t('settings.tokenSet') + '）' : ''" />
             </el-form-item>
             <el-row :gutter="16">
               <el-col :span="12">
@@ -49,10 +46,11 @@
             </el-alert>
           </el-form>
         </el-card>
-      </el-tab-pane>
+      </section>
 
       <!-- 数据库 -->
-      <el-tab-pane :label="t('settings.tabDatabase')" name="database">
+      <section class="settings-section">
+        <h3 class="section-heading">{{ t('settings.tabDatabase') }}</h3>
         <el-card shadow="never" class="pane-card">
           <el-alert :title="t('settings.dbHint')" type="info" :closable="false" show-icon class="mb" />
           <div class="kv"><span>{{ t('settings.dbConf') }}</span><b class="dc-mono">{{ db.conf_path }}</b></div>
@@ -77,57 +75,54 @@
             </el-table-column>
           </el-table>
         </el-card>
-      </el-tab-pane>
+      </section>
 
       <!-- 品牌 / 型号 -->
-      <el-tab-pane :label="t('settings.tabDict')" name="dict">
+      <section class="settings-section">
+        <h3 class="section-heading">{{ t('settings.tabDict') }}</h3>
         <el-row :gutter="16">
           <el-col :xs="24" :md="10">
             <el-card shadow="never" class="pane-card">
               <template #header>{{ t('settings.brands') }}</template>
               <div class="add-row">
-                <el-input v-model="newBrand" :placeholder="t('settings.brandName')" @keyup.enter="addBrand" />
+                <el-input v-model="newBrand" @keyup.enter="addBrand" />
                 <el-button type="primary" :icon="Plus" @click="addBrand" />
               </div>
-              <div class="chip-list">
-                <el-tag
-                  v-for="b in meta.brands"
-                  :key="b.id"
-                  closable
-                  class="chip"
-                  @close="removeBrand(b)"
-                >{{ b.name }}</el-tag>
-              </div>
+              <el-table :data="meta.brands" size="small" max-height="360">
+                <el-table-column prop="name" :label="t('settings.brandName')" />
+                <el-table-column width="60">
+                  <template #default="{ row }">
+                    <el-button size="small" text type="danger" :icon="Delete" @click="removeBrand(row)" />
+                  </template>
+                </el-table-column>
+                <template #empty><span class="dc-dim">{{ t('common.noData') }}</span></template>
+              </el-table>
             </el-card>
           </el-col>
           <el-col :xs="24" :md="14">
             <el-card shadow="never" class="pane-card">
               <template #header>{{ t('settings.models') }}</template>
-              <div class="add-row model-add">
-                <el-select v-model="modelBrandId" :placeholder="t('settings.selectBrand')" clearable class="mb-select" @change="loadModels">
-                  <el-option v-for="b in meta.brands" :key="b.id" :label="b.name" :value="b.id" />
-                </el-select>
-                <el-input v-model="newModel" :placeholder="t('settings.modelName')" @keyup.enter="addModel" />
-                <el-input v-model="newModelVram" :placeholder="t('settings.defaultVram')" class="vram-in" />
+              <div class="add-row">
+                <el-input v-model="newModel" @keyup.enter="addModel" />
                 <el-button type="primary" :icon="Plus" @click="addModel" />
               </div>
               <el-table :data="models" size="small" max-height="360">
                 <el-table-column prop="name" :label="t('settings.modelName')" />
-                <el-table-column prop="brand_name" :label="t('settings.brands')" width="120" />
-                <el-table-column prop="default_vram" :label="t('settings.defaultVram')" width="100" />
                 <el-table-column width="60">
                   <template #default="{ row }">
                     <el-button size="small" text type="danger" :icon="Delete" @click="removeModel(row)" />
                   </template>
                 </el-table-column>
+                <template #empty><span class="dc-dim">{{ t('common.noData') }}</span></template>
               </el-table>
             </el-card>
           </el-col>
         </el-row>
-      </el-tab-pane>
+      </section>
 
       <!-- 账号 -->
-      <el-tab-pane :label="t('settings.tabAccount')" name="account">
+      <section class="settings-section">
+        <h3 class="section-heading">{{ t('settings.tabAccount') }}</h3>
         <el-card shadow="never" class="pane-card account-card">
           <template #header>{{ t('settings.changePwd') }}</template>
           <el-form ref="pwdFormRef" :model="pwd" :rules="pwdRules" label-width="130px" label-position="left">
@@ -152,8 +147,8 @@
             </el-form-item>
           </el-form>
         </el-card>
-      </el-tab-pane>
-    </el-tabs>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -171,8 +166,6 @@ const { t } = useI18n()
 const meta = useMetaStore()
 const auth = useAuthStore()
 const locale = currentLocale
-
-const activeTab = ref('hosting')
 
 // ---- 图床 ----
 const hosting = reactive({ base_url: '', public_base: '', project: '', token: '', token_set: false, timeout: 30, verify_tls: true })
@@ -236,11 +229,9 @@ async function reconnect() {
   }
 }
 
-// ---- 品牌 / 型号 ----
+// ---- 品牌 / 型号（两者相互独立）----
 const newBrand = ref('')
 const newModel = ref('')
-const newModelVram = ref('')
-const modelBrandId = ref(null)
 const models = ref([])
 
 async function addBrand() {
@@ -255,15 +246,14 @@ async function removeBrand(b) {
   await meta.reloadBrands()
 }
 async function loadModels() {
-  const res = await optionsApi.models(modelBrandId.value || undefined)
+  const res = await optionsApi.models()
   models.value = res.items || []
 }
 async function addModel() {
   const name = newModel.value.trim()
   if (!name) return
-  await optionsApi.createModel({ name, brand_id: modelBrandId.value || null, default_vram: newModelVram.value.trim() || null })
+  await optionsApi.createModel({ name })
   newModel.value = ''
-  newModelVram.value = ''
   await loadModels()
 }
 async function removeModel(row) {
@@ -307,6 +297,16 @@ onMounted(async () => {
 
 <style scoped>
 .page-title { font-size: 20px; margin-bottom: 16px; }
+.settings-stack { display: flex; flex-direction: column; gap: 22px; }
+.settings-section { display: block; }
+.section-heading {
+  font-size: 15px;
+  font-weight: 600;
+  color: #8fb8ff;
+  margin: 0 0 10px;
+  padding-left: 10px;
+  border-left: 3px solid #5b8cff;
+}
 .pane-card { margin-bottom: 16px; }
 .cfg-form .hint { font-size: 12px; color: #7b8698; margin-top: 4px; line-height: 1.5; }
 .full { width: 100% !important; }

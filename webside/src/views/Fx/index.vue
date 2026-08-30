@@ -7,8 +7,8 @@
         <el-card shadow="never" class="today-card">
           <div class="today-label">{{ t('fx.today') }}</div>
           <div class="today-rate dc-mono" v-if="today">
-            1 <span class="unit">{{ t('currency.JPY_short') }}</span> =
-            {{ formatRate(today.rate) }} <span class="unit">{{ t('currency.CNY_short') }}</span>
+            1 <span class="unit">{{ t('currency.CNY_short') }}</span> =
+            {{ formatRate(today.rate) }} <span class="unit">{{ t('currency.JPY_short') }}</span>
           </div>
           <div class="today-rate" v-else>—</div>
           <div class="today-date dc-dim" v-if="today">

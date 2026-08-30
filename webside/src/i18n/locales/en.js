@@ -65,6 +65,13 @@ export default {
     gpuz: 'GPU-Z',
     mods: 'Mods test'
   },
+  categoryDesc: {
+    appearance: 'Whole-card exterior (front / back / ports)',
+    pcb: 'PCB front & back (cooler removed)',
+    gpu_core: 'GPU core close-up',
+    gpuz: 'GPU-Z info screenshots',
+    mods: 'Stress test / mods / render-test screenshots or clips'
+  },
   platform: {
     yahoo: 'Yahoo Auctions',
     mercari: 'Mercari',
@@ -95,7 +102,7 @@ export default {
     media: 'Images/Videos',
     cover: 'Cover',
     fx: 'FX',
-    fxRate: 'Rate (1 JPY = ? CNY)',
+    fxRate: 'Rate (1 CNY = ? JPY)',
     fxDate: 'Rate date',
     fxManual: 'Manual rate',
     fxAuto: 'Auto-fetched',
@@ -114,6 +121,8 @@ export default {
     fxPreview: 'Rate to apply',
     fxManualHint: 'Leave empty to auto-fetch by date; if set, this card is no longer auto-refreshed',
     incomplete: 'Missing rate, amounts incomplete',
+    mediaHint: 'Save the basic info first, then upload images/videos for each category below',
+    saveToUpload: 'Save, then upload images',
     noModel: 'Unnamed model',
     statusChanged: 'Status updated',
     fxRefreshed: 'Rate refreshed',
@@ -222,6 +231,7 @@ export default {
     models: 'Models',
     brandName: 'Brand name',
     modelName: 'Model name',
+    modelNamePlaceholder: 'Model, e.g. RTX 4090',
     defaultVram: 'Default VRAM',
     addBrand: 'Add brand',
     addModel: 'Add model',

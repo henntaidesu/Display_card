@@ -65,6 +65,13 @@ export default {
     gpuz: 'GPU-Z',
     mods: 'mods 测试'
   },
+  categoryDesc: {
+    appearance: '整卡外观照片（正面 / 背面 / 接口）',
+    pcb: '拆散热后 PCB 正反面',
+    gpu_core: 'GPU 核心特写',
+    gpuz: 'GPU-Z 信息截图',
+    mods: '烤机 / 改造 / GPU-Z 渲染测试截图或录屏'
+  },
   platform: {
     yahoo: '雅虎拍卖',
     mercari: '煤炉 Mercari',
@@ -95,7 +102,7 @@ export default {
     media: '图片/视频',
     cover: '封面',
     fx: '汇率',
-    fxRate: '汇率（1 日元 = ? 人民币）',
+    fxRate: '汇率（1 人民币 = ? 日元）',
     fxDate: '牌价日',
     fxManual: '手工汇率',
     fxAuto: '自动获取',
@@ -114,6 +121,8 @@ export default {
     fxPreview: '将采用汇率',
     fxManualHint: '留空则按日期自动获取；填写后此卡不再自动刷新',
     incomplete: '缺少汇率，金额不完整',
+    mediaHint: '保存基本信息后，即可在此为下列分类上传图片 / 视频',
+    saveToUpload: '保存后上传图片',
     noModel: '未命名型号',
     statusChanged: '状态已更新',
     fxRefreshed: '汇率已刷新',
@@ -222,6 +231,7 @@ export default {
     models: '型号',
     brandName: '品牌名',
     modelName: '型号名',
+    modelNamePlaceholder: '型号，如 RTX 4090',
     defaultVram: '默认显存',
     addBrand: '添加品牌',
     addModel: '添加型号',

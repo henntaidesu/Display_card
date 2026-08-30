@@ -82,22 +82,11 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column :label="t('common.actions')" width="150" fixed="right">
+        <el-table-column :label="t('common.actions')" width="90" fixed="right" align="center">
           <template #default="{ row }">
-            <el-dropdown trigger="click" @command="(cmd) => onStatusCmd(row, cmd)" @click.stop>
-              <el-button size="small" text bg @click.stop>
-                {{ t('common.edit') }}<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="s in statuses" :key="s" :command="s" :disabled="s === row.status">
-                    → {{ t('status.' + s) }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-button size="small" text bg :icon="EditPen" @click.stop="openEdit(row)" />
-            <el-button size="small" text bg type="danger" :icon="Delete" @click.stop="confirmDelete(row)" />
+            <el-button size="small" type="primary" text bg :icon="EditPen" @click.stop="openEdit(row)">
+              {{ t('common.edit') }}
+            </el-button>
           </template>
         </el-table-column>
         <template #empty><span class="dc-dim">{{ t('common.noData') }}</span></template>
@@ -131,11 +120,9 @@ import { computed, onActivated, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
-  ArrowDown, Delete, EditPen, Picture, Plus, Refresh, Search, WarningFilled
+  EditPen, Picture, Plus, Refresh, Search, WarningFilled
 } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
 import { cardsApi, optionsApi, systemApi } from '@/api'
-import { ElMessage } from '@/utils/notify'
 import { cny, firstImage, profitClass } from '@/utils/format'
 import { useMetaStore } from '@/stores/meta'
 import CardFormDialog from '@/components/CardFormDialog.vue'
@@ -231,34 +218,6 @@ function goDetail(row) {
 async function onSaved() {
   await fetch()
   loadAux()
-}
-
-async function onStatusCmd(row, status) {
-  try {
-    await cardsApi.changeStatus(row.id, { status })
-    ElMessage.success(t('card.statusChanged'))
-    fetch()
-  } catch { /* 拦截器已提示 */ }
-}
-
-async function confirmDelete(row) {
-  try {
-    const purge = ref(false)
-    await ElMessageBox.confirm(t('card.deleteConfirm'), t('common.delete'), {
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel'),
-      type: 'warning',
-      // 复用一个简单的确认；是否连图床一起删，用第二个确认更省事
-      distinguishCancelAndClose: true
-    })
-    const withMedia = await ElMessageBox.confirm(
-      t('card.deleteWithMedia'), t('common.delete'),
-      { confirmButtonText: t('common.yes'), cancelButtonText: t('common.no'), type: 'info' }
-    ).then(() => true).catch(() => false)
-    await cardsApi.remove(row.id, withMedia)
-    ElMessage.success(t('common.deleted'))
-    fetch()
-  } catch { /* 取消 */ }
 }
 
 onActivated(() => {

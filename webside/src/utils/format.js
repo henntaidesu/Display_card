@@ -40,8 +40,8 @@ export function cny(amount) {
 
 export function formatRate(rate) {
   if (rate === null || rate === undefined) return '—'
-  // 1 日元换几分钱人民币，量级 0.04 左右，留 4~5 位才看得出变化
-  return Number(rate).toFixed(5)
+  // rate = 1 人民币 = 多少日元，量级约 23.76，4 位小数足够看出变化
+  return Number(rate).toFixed(4)
 }
 
 // 利润着色：正绿负红，0 和缺失用默认色

@@ -25,8 +25,8 @@ class BrandPayload(BaseModel):
 
 
 class ModelPayload(BaseModel):
+    # 型号独立于品牌，只有名字（如 RTX 4090）和默认显存
     name: str = Field(min_length=1, max_length=128)
-    brand_id: Optional[int] = None
     default_vram: Optional[str] = Field(default=None, max_length=32)
     sort_order: int = 0
 
@@ -71,39 +71,32 @@ def delete_brand(brand_id: int):
 
 
 @router.get("/models")
-def list_models(brand_id: Optional[int] = None):
-    if brand_id:
-        rows = db.query(
-            "SELECT m.id, m.brand_id, m.name, m.default_vram, m.sort_order, b.name AS brand_name "
-            "FROM gpu_models m LEFT JOIN gpu_brands b ON b.id = m.brand_id "
-            "WHERE m.brand_id = %s ORDER BY m.sort_order, m.name",
-            (brand_id,),
+def list_models():
+    """所有型号，独立于品牌。列表和录卡下拉都用这一份完整清单。"""
+    return {
+        "items": db.query(
+            "SELECT id, name, default_vram, sort_order FROM gpu_models "
+            "ORDER BY sort_order, name"
         )
-    else:
-        rows = db.query(
-            "SELECT m.id, m.brand_id, m.name, m.default_vram, m.sort_order, b.name AS brand_name "
-            "FROM gpu_models m LEFT JOIN gpu_brands b ON b.id = m.brand_id "
-            "ORDER BY m.sort_order, m.name"
-        )
-    return {"items": rows}
+    }
 
 
 @router.post("/models")
 def create_model(payload: ModelPayload):
     name = payload.name.strip()
     existing = db.query_one(
-        "SELECT id, brand_id, name, default_vram, sort_order FROM gpu_models "
-        "WHERE name = %s AND (brand_id <=> %s)",
-        (name, payload.brand_id),
+        "SELECT id, name, default_vram, sort_order FROM gpu_models WHERE name = %s",
+        (name,),
     )
     if existing:
+        # 录卡时现敲一个已存在的型号不该报错，直接把已有那条还回去
         return existing
     model_id = db.insert(
-        "INSERT INTO gpu_models (brand_id, name, default_vram, sort_order) VALUES (%s, %s, %s, %s)",
-        (payload.brand_id, name, (payload.default_vram or "").strip() or None, payload.sort_order),
+        "INSERT INTO gpu_models (name, default_vram, sort_order) VALUES (%s, %s, %s)",
+        (name, (payload.default_vram or "").strip() or None, payload.sort_order),
     )
     return {
-        "id": model_id, "brand_id": payload.brand_id, "name": name,
+        "id": model_id, "name": name,
         "default_vram": payload.default_vram, "sort_order": payload.sort_order,
     }
 

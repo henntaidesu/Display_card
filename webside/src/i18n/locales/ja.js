@@ -65,6 +65,13 @@ export default {
     gpuz: 'GPU-Z',
     mods: 'modsテスト'
   },
+  categoryDesc: {
+    appearance: 'カード全体の外観（表 / 裏 / 端子）',
+    pcb: 'クーラー分解後の PCB 表裏',
+    gpu_core: 'GPU コアの接写',
+    gpuz: 'GPU-Z の情報スクショ',
+    mods: '負荷テスト / 改造 / レンダーテストのスクショ・録画'
+  },
   platform: {
     yahoo: 'ヤフオク',
     mercari: 'メルカリ',
@@ -95,7 +102,7 @@ export default {
     media: '画像/動画',
     cover: 'カバー',
     fx: '為替',
-    fxRate: '為替レート（1円 = ? 元）',
+    fxRate: '為替レート（1元 = ? 円）',
     fxDate: 'レート基準日',
     fxManual: '手動レート',
     fxAuto: '自動取得',
@@ -114,6 +121,8 @@ export default {
     fxPreview: '適用レート',
     fxManualHint: '空欄なら日付から自動取得。入力するとこのカードは自動更新されません',
     incomplete: 'レート不足のため金額が不完全',
+    mediaHint: '基本情報を保存すると、下記の分類ごとに画像／動画をアップロードできます',
+    saveToUpload: '保存後に画像をアップロード',
     noModel: '型番未設定',
     statusChanged: 'ステータスを更新しました',
     fxRefreshed: 'レートを更新しました',
@@ -222,6 +231,7 @@ export default {
     models: 'モデル',
     brandName: 'ブランド名',
     modelName: 'モデル名',
+    modelNamePlaceholder: 'モデル名（例: RTX 4090）',
     defaultVram: 'デフォルトVRAM',
     addBrand: 'ブランド追加',
     addModel: 'モデル追加',

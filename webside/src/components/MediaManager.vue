@@ -9,55 +9,49 @@
       class="mb"
     />
 
-    <el-tabs v-model="activeCategory" class="cat-tabs">
-      <el-tab-pane
-        v-for="cat in categories"
-        :key="cat"
-        :name="cat"
-      >
-        <template #label>
-          <span>{{ t('category.' + cat) }}</span>
-          <el-badge
-            v-if="countByCategory[cat]"
-            :value="countByCategory[cat]"
-            class="tab-badge"
-            type="primary"
-          />
-        </template>
-
-        <div class="cat-body">
-          <div class="grid">
-            <div v-for="item in grouped[cat] || []" :key="item.id" class="cell">
-              <div class="thumb" @click="preview(item)">
-                <img v-if="item.kind === 'image'" :src="thumbUrl(item)" :alt="item.filename" loading="lazy" />
-                <div v-else class="video-thumb">
-                  <el-icon :size="30"><VideoPlay /></el-icon>
-                  <span class="video-tag">{{ t('media.video') }}</span>
-                </div>
-              </div>
-              <button class="del-btn" type="button" :title="t('common.delete')" @click.stop="removeItem(item)">
-                <el-icon><Close /></el-icon>
-              </button>
-            </div>
-
-            <el-upload
-              :show-file-list="false"
-              :auto-upload="false"
-              :multiple="true"
-              :disabled="!canUpload"
-              accept="image/*,video/*"
-              class="uploader"
-              :on-change="(file) => onPick(cat, file)"
-            >
-              <div class="add-cell" :class="{ disabled: !canUpload }">
-                <el-icon :size="24"><Plus /></el-icon>
-                <span>{{ uploading ? t('media.uploading') : t('media.upload') }}</span>
-              </div>
-            </el-upload>
-          </div>
+    <!-- 每个分类一块，标题写明放什么，下面直接是该分类的上传网格——不再藏在标签页后面 -->
+    <div v-for="(cat, idx) in categories" :key="cat" class="cat-block" :class="{ first: idx === 0 }">
+      <div class="cat-head">
+        <span class="cat-index">{{ idx + 1 }}</span>
+        <div class="cat-titles">
+          <span class="cat-name">
+            {{ t('category.' + cat) }}
+            <span v-if="countByCategory[cat]" class="cat-count">{{ countByCategory[cat] }}</span>
+          </span>
+          <span class="cat-desc">{{ t('categoryDesc.' + cat) }}</span>
         </div>
-      </el-tab-pane>
-    </el-tabs>
+      </div>
+
+      <div class="grid">
+        <div v-for="item in grouped[cat] || []" :key="item.id" class="cell">
+          <div class="thumb" @click="preview(item)">
+            <img v-if="item.kind === 'image'" :src="thumbUrl(item)" :alt="item.filename" loading="lazy" />
+            <div v-else class="video-thumb">
+              <el-icon :size="30"><VideoPlay /></el-icon>
+              <span class="video-tag">{{ t('media.video') }}</span>
+            </div>
+          </div>
+          <button class="del-btn" type="button" :title="t('common.delete')" @click.stop="removeItem(item)">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+
+        <el-upload
+          :show-file-list="false"
+          :auto-upload="false"
+          :multiple="true"
+          :disabled="!canUpload"
+          accept="image/*,video/*"
+          class="uploader"
+          :on-change="(file) => onPick(cat, file)"
+        >
+          <div class="add-cell" :class="{ disabled: !canUpload }">
+            <el-icon :size="22"><Plus /></el-icon>
+            <span>{{ uploading ? t('media.uploading') : t('media.upload') }}</span>
+          </div>
+        </el-upload>
+      </div>
+    </div>
 
     <el-image-viewer
       v-if="viewerUrls.length"
@@ -95,7 +89,6 @@ const categories = computed(() =>
     ? meta.enums.media_categories
     : ['appearance', 'pcb', 'gpu_core', 'gpuz', 'mods']
 )
-const activeCategory = ref(categories.value[0])
 const grouped = ref({})
 const uploading = ref(false)
 
@@ -135,7 +128,8 @@ function preview(item) {
     videoDialog.value = true
     return
   }
-  const images = (grouped.value[activeCategory.value] || []).filter((m) => m.kind === 'image')
+  // 点开大图时，同分类的图片一起进查看器，可左右翻
+  const images = (grouped.value[item.category] || []).filter((m) => m.kind === 'image')
   viewerUrls.value = images.map((m) => m.public_url)
   viewerIndex.value = Math.max(0, images.findIndex((m) => m.id === item.id))
 }
@@ -193,9 +187,38 @@ defineExpose({ reload: load })
 
 <style scoped>
 .mb { margin-bottom: 12px; }
-.cat-tabs :deep(.el-tabs__item) { color: #a6adb4; }
-.tab-badge { margin-left: 6px; }
-.cat-body { min-height: 140px; }
+
+/* 每个分类一块，之间用分隔线断开，标题写明放什么内容 */
+.cat-block { padding-top: 16px; margin-top: 16px; border-top: 1px solid #1c2740; }
+.cat-block.first { padding-top: 0; margin-top: 0; border-top: none; }
+.cat-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.cat-index {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(91, 140, 255, 0.16);
+  color: #8fb8ff;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.cat-titles { display: flex; flex-direction: column; gap: 2px; }
+.cat-name { font-size: 14px; font-weight: 600; color: #e6edf7; display: flex; align-items: center; gap: 8px; }
+.cat-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 7px;
+  height: 17px;
+  line-height: 17px;
+  border-radius: 9px;
+  background: #5b8cff;
+  color: #fff;
+}
+.cat-desc { font-size: 12px; color: #8a94a6; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

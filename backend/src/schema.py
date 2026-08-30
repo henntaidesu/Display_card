@@ -98,16 +98,14 @@ _TABLES: List[Tuple[str, str]] = [
         """
         CREATE TABLE IF NOT EXISTS gpu_models (
             id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            brand_id     INT UNSIGNED NULL,
             name         VARCHAR(128) NOT NULL,
             default_vram VARCHAR(32) NULL,
             sort_order   INT NOT NULL DEFAULT 0,
             created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
-            UNIQUE KEY uk_gpu_models_brand_name (brand_id, name),
-            KEY idx_gpu_models_brand (brand_id)
+            UNIQUE KEY uk_gpu_models_name (name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-          COMMENT='型号字典。default_vram 让选完型号自动带出显存，少敲一次'
+          COMMENT='型号字典，独立于品牌。型号即芯片名，如 RTX 4090 / RTX 5090。'
         """,
     ),
     (
@@ -247,19 +245,52 @@ def _ensure_column(table: str, column: str, ddl: str) -> None:
     db.execute("ALTER TABLE `{t}` ADD COLUMN {ddl}".format(t=table.replace("`", ""), ddl=ddl))
 
 
+def _has_column(table: str, column: str) -> bool:
+    return int(db.query_scalar(
+        "SELECT COUNT(*) AS c FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s",
+        (table, column), default=0) or 0) > 0
+
+
+def _has_index(table: str, index: str) -> bool:
+    return int(db.query_scalar(
+        "SELECT COUNT(*) AS c FROM information_schema.STATISTICS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND INDEX_NAME = %s",
+        (table, index), default=0) or 0) > 0
+
+
+def _migrate_gpu_models_standalone() -> None:
+    """把 gpu_models 从「依附品牌」迁成独立型号表：去掉 brand_id 及其相关索引，
+    唯一键改到 name 上。CREATE TABLE IF NOT EXISTS 动不了已存在的旧表，只能在这里 ALTER。"""
+    if not _has_column("gpu_models", "brand_id"):
+        return  # 已是新结构，无需迁移
+    log.info("迁移：gpu_models 解除与品牌的关联，改为独立型号表")
+    # 先删掉引用 brand_id 的旧索引，之后才能删列
+    if _has_index("gpu_models", "uk_gpu_models_brand_name"):
+        db.execute("ALTER TABLE gpu_models DROP INDEX uk_gpu_models_brand_name")
+    if _has_index("gpu_models", "idx_gpu_models_brand"):
+        db.execute("ALTER TABLE gpu_models DROP INDEX idx_gpu_models_brand")
+    # 旧结构允许跨品牌同名，去 brand 后同名会撞新唯一键：同名只保留 id 最小的一条
+    db.execute("DELETE m1 FROM gpu_models m1 JOIN gpu_models m2 ON m1.name = m2.name AND m1.id > m2.id")
+    db.execute("ALTER TABLE gpu_models DROP COLUMN brand_id")
+    if not _has_index("gpu_models", "uk_gpu_models_name"):
+        db.execute("ALTER TABLE gpu_models ADD UNIQUE KEY uk_gpu_models_name (name)")
+
+
 def init() -> None:
-    """建库 → 建表 → 补列 → 灌入首次运行的种子数据。可重复执行。"""
+    """建库 → 建表 → 补列 → 结构迁移 → 灌入首次运行的种子数据。可重复执行。"""
     db.ensure_database()
     for name, ddl in _TABLES:
         db.execute(ddl)
         log.debug("表就绪：%s", name)
     for table, column, ddl in _MIGRATIONS:
         _ensure_column(table, column, ddl)
+    _migrate_gpu_models_standalone()
     _seed()
 
 
 def _seed() -> None:
-    """首次运行的种子数据：默认管理员 + 常见品牌。已有数据时什么都不做。"""
+    """首次运行的种子数据：只建默认管理员。品牌与型号一律由用户手动添加，不预置。"""
     from src.security import hash_password
 
     # 按用户名判断而不是 COUNT==0：库里若已有一张旧的 users 表（有其他行、但没有 admin），
@@ -276,16 +307,3 @@ def _seed() -> None:
         # 否则它进不了「系统配置」里的数据库/账号等管理员专属页面。
         db.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (admin["id"],))
         log.info("已将已存在的 admin 账号提升为管理员")
-
-    brand_count = int(db.query_scalar("SELECT COUNT(*) AS c FROM gpu_brands", default=0) or 0)
-    if brand_count == 0:
-        brands = [
-            "ASUS", "MSI", "GIGABYTE", "ZOTAC", "COLORFUL", "GALAX",
-            "PALIT", "INNO3D", "EVGA", "SAPPHIRE", "PowerColor", "XFX",
-            "NVIDIA", "AMD", "ELSA", "玄人志向",
-        ]
-        db.executemany(
-            "INSERT INTO gpu_brands (name, sort_order) VALUES (%s, %s)",
-            [(name, index) for index, name in enumerate(brands)],
-        )
-        log.info("已灌入 %d 个默认品牌", len(brands))
