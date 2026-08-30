@@ -45,7 +45,8 @@ export default {
     submit: 'Sign in',
     placeholderUser: 'Enter username',
     placeholderPwd: 'Enter password',
-    firstRun: 'First run uses admin / admin. Change the password in Settings right after login.'
+    firstRun: 'First run uses admin / admin. Change the password in Settings right after login.',
+    defaultAccount: 'Default account: admin / admin'
   },
   status: {
     purchased: 'Purchased',

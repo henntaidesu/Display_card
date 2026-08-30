@@ -221,7 +221,17 @@ _TABLES: List[Tuple[str, str]] = [
 
 
 # 后加的列写在这里：(表名, 列名, 完整的 ADD COLUMN 定义)
-_MIGRATIONS: List[Tuple[str, str, str]] = []
+#
+# CREATE TABLE IF NOT EXISTS 对已存在的表是空操作，所以当目标库里事先就有一张
+# 同名旧表（比如上一版本建的、或别处留下的 users）时，新加的列不会自动补上，运行时会撞
+# "Unknown column"。凡是后来才加进表定义的列，都必须在这里登记一条，让 _ensure_column
+# 在启动时按需补齐。已存在的列会被跳过，重复执行安全。
+_MIGRATIONS: List[Tuple[str, str, str]] = [
+    ("users", "is_active", "is_active TINYINT(1) NOT NULL DEFAULT 1"),
+    ("users", "is_admin", "is_admin TINYINT(1) NOT NULL DEFAULT 0"),
+    ("users", "token_version", "token_version INT UNSIGNED NOT NULL DEFAULT 0"),
+    ("users", "last_active_at", "last_active_at DATETIME NULL"),
+]
 
 
 def _ensure_column(table: str, column: str, ddl: str) -> None:
@@ -252,13 +262,20 @@ def _seed() -> None:
     """首次运行的种子数据：默认管理员 + 常见品牌。已有数据时什么都不做。"""
     from src.security import hash_password
 
-    user_count = int(db.query_scalar("SELECT COUNT(*) AS c FROM users", default=0) or 0)
-    if user_count == 0:
+    # 按用户名判断而不是 COUNT==0：库里若已有一张旧的 users 表（有其他行、但没有 admin），
+    # 用 COUNT 判断会以为「已初始化」而跳过，导致没有可登录的账号。
+    admin = db.query_one("SELECT id, is_admin FROM users WHERE username = %s", ("admin",))
+    if not admin:
         db.insert(
             "INSERT INTO users (username, password_hash, is_active, is_admin) VALUES (%s, %s, 1, 1)",
             ("admin", hash_password("admin")),
         )
         log.warning("已创建默认管理员 admin / admin —— 请登录后立即在「系统配置」中改密码")
+    elif not admin["is_admin"]:
+        # 旧表迁移后 is_admin 默认补成了 0：把内置的 admin 账号提回管理员，
+        # 否则它进不了「系统配置」里的数据库/账号等管理员专属页面。
+        db.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (admin["id"],))
+        log.info("已将已存在的 admin 账号提升为管理员")
 
     brand_count = int(db.query_scalar("SELECT COUNT(*) AS c FROM gpu_brands", default=0) or 0)
     if brand_count == 0:

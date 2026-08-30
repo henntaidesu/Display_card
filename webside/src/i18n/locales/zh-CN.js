@@ -45,7 +45,8 @@ export default {
     submit: '登录',
     placeholderUser: '请输入用户名',
     placeholderPwd: '请输入密码',
-    firstRun: '首次使用默认账号 admin / admin，登录后请立即在「系统配置」中修改密码'
+    firstRun: '首次使用默认账号 admin / admin，登录后请立即在「系统配置」中修改密码',
+    defaultAccount: '默认账号：admin / admin'
   },
   status: {
     purchased: '已购入',

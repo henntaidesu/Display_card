@@ -2,10 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
-// 前端 dev server 端口。后端在 9701（见 conf.ini），两者错开，
+// 前端 dev server 端口。后端在 9910（见 conf.ini），两者错开，
 // 同机跑 FreeMarket_Manager（9600/9601）和图床（9990）时也不打架。
-const DEV_PORT = 9700
-const BACKEND = 'http://127.0.0.1:9701'
+const DEV_PORT = 9911
+const BACKEND = 'http://127.0.0.1:9910'
 
 export default defineConfig({
   plugins: [vue()],

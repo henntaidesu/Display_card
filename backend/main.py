@@ -38,6 +38,10 @@ log = logging.getLogger("displaycard")
 async def lifespan(app: FastAPI):
     from src import schema
 
+    # conf.ini 不存在时自动生成一份不含注释的默认配置，让首次运行不至于连文件都没有。
+    if conf.ensure_conf_file():
+        log.warning("已生成默认 conf.ini：%s —— 请填写 [mysql] 的连接信息后重启", conf.conf_path())
+
     cfg = conf.mysql_config()
     log.info("配置文件：%s", conf.conf_path())
     log.info("MySQL：%s@%s:%s/%s", cfg["user"], cfg["host"], cfg["port"], cfg["database"])
@@ -70,7 +74,7 @@ app = FastAPI(
 
 # 认证走 Authorization Bearer 而非 Cookie，所以默认允许任意来源但**关闭凭证**——
 # 「通配 origin + allow_credentials」是明确危险的组合，这里从结构上避开它。
-# 需要锁定来源时设 DISPLAYCARD_CORS_ORIGINS="https://host:9700"（逗号分隔）。
+# 需要锁定来源时设 DISPLAYCARD_CORS_ORIGINS="https://host:9911"（逗号分隔）。
 _cors_env = (os.environ.get("DISPLAYCARD_CORS_ORIGINS") or "").strip()
 if _cors_env:
     _origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
@@ -95,4 +99,5 @@ mount_spa(app)  # 必须最后挂：根路径兜底会吃掉其余未匹配路�
 if __name__ == "__main__":
     from src.server import run
 
-    run(app)
+    # 传入 "main:app"：开启热重载时 uvicorn 需要这个导入串才能在改代码后重新加载。
+    run(app, import_string="main:app")

@@ -23,8 +23,7 @@
 
 ```
 Display_card/
-├─ conf.ini              ← 唯一的文件配置：MySQL 连接 + 监听端口（不提交，含密码）
-├─ conf.example.ini      ← 配置模板
+├─ conf.ini              ← 唯一的文件配置：MySQL 连接 + 监听端口（含密码）
 ├─ start.bat             ← 开发启动：起后端 + 前端 dev server
 ├─ pyinstaller.bat       ← 打包成单个 exe（前端 dist 打进 exe）
 ├─ displaycard.spec      ← PyInstaller 规格
@@ -56,14 +55,23 @@ pip install -r backend/requirements.txt
 
 ### 2. 配置 MySQL 连接
 
-复制模板并填写：
+编辑项目根目录的 `conf.ini`，`[mysql]` 段至少填对 `host` / `user` / `password`：
 
-```powershell
-copy conf.example.ini conf.ini
+```ini
+[mysql]
+host = 127.0.0.1
+port = 3306
+user = your_user
+password = your_password
+database = display_card
+charset = utf8mb4
+
+[server]
+host = 0.0.0.0
+port = 9910
 ```
 
-编辑 `conf.ini` 的 `[mysql]` 段，至少填对 `host` / `user` / `password`。库
-`display_card` 不存在时，若账号有建库权限会自动创建；否则请先手动建一个空库：
+库 `display_card` 不存在时，若账号有建库权限会自动创建；否则请先手动建一个空库：
 
 ```sql
 CREATE DATABASE display_card CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -80,15 +88,15 @@ CREATE DATABASE display_card CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 # 后端
 conda activate displayCard
 cd backend
-python main.py            # 监听 9701
+python main.py            # 监听 9910
 
 # 前端（另开一个终端）
 cd webside
 npm install
-npm run dev               # 监听 9700
+npm run dev               # 监听 9911
 ```
 
-浏览器打开 **http://localhost:9700**。首次登录 `admin` / `admin`，登录后请立即在
+浏览器打开 **http://localhost:9911**。首次登录 `admin` / `admin`，登录后请立即在
 「系统配置 → 账号」中改密码。
 
 ### 4. 配置图床
@@ -148,8 +156,8 @@ pyinstaller.bat
 
 | 服务 | 端口 |
 |------|------|
-| 前端 dev server | 9700 |
-| 后端 API | 9701 |
+| 前端 dev server | 9911 |
+| 后端 API | 9910 |
 | 图床（另一项目） | 9990 |
 
 ## 数据表

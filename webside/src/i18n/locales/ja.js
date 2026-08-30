@@ -45,7 +45,8 @@ export default {
     submit: 'ログイン',
     placeholderUser: 'ユーザー名を入力',
     placeholderPwd: 'パスワードを入力',
-    firstRun: '初回は admin / admin でログインし、「システム設定」でパスワードを変更してください'
+    firstRun: '初回は admin / admin でログインし、「システム設定」でパスワードを変更してください',
+    defaultAccount: 'デフォルトアカウント：admin / admin'
   },
   status: {
     purchased: '購入済み',

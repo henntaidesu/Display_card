@@ -30,11 +30,36 @@ _SPEC: Dict[str, Dict[str, tuple]] = {
     },
     "server": {
         "host": ("DISPLAYCARD_HOST", "0.0.0.0"),
-        "port": ("DISPLAYCARD_PORT", "9701"),
+        "port": ("DISPLAYCARD_PORT", "9910"),
     },
 }
 
 _cache: Dict[str, Dict[str, str]] | None = None
+
+
+def _default_conf_text() -> str:
+    """按 _SPEC 的默认值拼出一份**不含任何注释**的 conf.ini 文本。
+
+    从 _SPEC 生成而不是写死字符串：以后加/改配置项只动 _SPEC 一处，自动生成的
+    conf.ini 跟着变，不会和实际读取的键漂移。
+    """
+    lines = []
+    for section, keys in _SPEC.items():
+        lines.append(f"[{section}]")
+        for key, (_env, default) in keys.items():
+            lines.append(f"{key} = {default}")
+        lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def ensure_conf_file() -> bool:
+    """conf.ini 不存在时写一份不含注释的默认配置；已存在则原样保留。返回是否新建。"""
+    path = conf_path()
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_default_conf_text(), encoding="utf-8")
+    return True
 
 
 def _read_file() -> configparser.ConfigParser:
@@ -42,8 +67,10 @@ def _read_file() -> configparser.ConfigParser:
     parser = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
     path = conf_path()
     if path.exists():
-        # MySQL 密码里出现非 ASCII 字符时，按系统 ANSI 代码页读会乱码，显式指定 UTF-8。
-        parser.read(path, encoding="utf-8")
+        # utf-8-sig 而不是 utf-8：编辑器（尤其 VS Code）保存 conf.ini 时常带上 UTF-8 BOM，
+        # 纯 utf-8 读会把 BOM 附在第一个 [section] 头上导致整份解析不出任何 section，
+        # 后端就静默退回默认值（root/空密码）连不上库。utf-8-sig 有无 BOM 都能正确读。
+        parser.read(path, encoding="utf-8-sig")
     return parser
 
 
@@ -90,7 +117,7 @@ def mysql_config() -> Dict[str, Any]:
 
 def server_config() -> Dict[str, Any]:
     cfg = load()["server"]
-    return {"host": cfg["host"] or "0.0.0.0", "port": _int(cfg["port"], 9701)}
+    return {"host": cfg["host"] or "0.0.0.0", "port": _int(cfg["port"], 9910)}
 
 
 def describe() -> Dict[str, Any]:
