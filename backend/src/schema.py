@@ -42,6 +42,20 @@ MEDIA_CATEGORIES: List[str] = [
     "mods",        # mods 测试
 ]
 
+# 整机设备里的部件类型。顺序即录入表单里「快捷添加」按钮的顺序。
+# 内存 / 硬盘一台机器里往往有好几条，所以部件是**一台设备下的多行**，而不是设备上的字段。
+DEVICE_PART_TYPES: List[str] = [
+    "cpu",          # CPU
+    "gpu",          # 显卡
+    "ram",          # 内存
+    "disk",         # 硬盘
+    "motherboard",  # 主板
+    "psu",          # 电源
+    "cooler",       # 散热
+    "case",         # 机箱
+    "other",        # 其他
+]
+
 SOURCE_PLATFORMS: List[str] = ["yahoo", "mercari", "other"]
 
 CURRENCIES: List[str] = ["JPY", "CNY"]
@@ -226,6 +240,96 @@ _TABLES: List[Tuple[str, str]] = [
         """,
     ),
     (
+        "devices",
+        """
+        CREATE TABLE IF NOT EXISTS devices (
+            id       INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            mgmt_no  VARCHAR(32) NOT NULL COMMENT '系统管理编号 DEV-2026-0001',
+            title    VARCHAR(128) NULL COMMENT '整机名称，如「戴尔 T7920 工作站」',
+
+            source_platform VARCHAR(16) NULL COMMENT 'yahoo / mercari / other',
+            seller          VARCHAR(128) NULL,
+            item_url        VARCHAR(1024) NULL,
+            order_no        VARCHAR(128) NULL,
+
+            -- 采购只有**一笔总价**：整机是一口价买进来的，拆开来卖才产生多笔收入。
+            -- 所以购入金额挂在设备上，出售金额挂在 device_parts 的每一行上。
+            purchase_date          DATE NULL,
+            purchase_amount        DECIMAL(14,2) NULL COMMENT '整机购入总价',
+            purchase_currency      VARCHAR(3) NOT NULL DEFAULT 'JPY',
+            intl_shipping_amount   DECIMAL(14,2) NULL,
+            intl_shipping_currency VARCHAR(3) NOT NULL DEFAULT 'JPY',
+
+            -- 汇率快照，口径与 cards 完全一致：取到就写死，之后不重算。
+            purchase_fx_rate DECIMAL(18,8) NULL COMMENT '1 CNY = ? JPY，按 purchase_date',
+            purchase_fx_date DATE NULL COMMENT '实际取到的牌价日（非交易日会回退）',
+
+            -- 采购资金从哪来，与 cards 同一套语义：'own' 走 purchase_fx_rate；
+            -- 'pool' 则由 fund_draws / fund_allocations 按注资批次的汇率分段算出成本。
+            fund_source VARCHAR(8) NOT NULL DEFAULT 'own',
+            pool_purchase_cny DECIMAL(14,2) NULL COMMENT '购入总价按各注资批次汇率折算后的人民币合计',
+            pool_intl_cny     DECIMAL(14,2) NULL COMMENT '国际运费按各注资批次汇率折算后的人民币合计',
+            pool_fx_rate      DECIMAL(18,8) NULL COMMENT '这台设备实际吃到的加权汇率，仅供展示',
+
+            status     VARCHAR(24) NOT NULL DEFAULT 'purchased',
+            note       TEXT NULL,
+            -- 与卡片同一套草稿机制：新增弹窗一打开就先建一台，保存即转 0。
+            is_draft   TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                           ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uk_devices_mgmt_no (mgmt_no),
+            KEY idx_devices_status (status),
+            KEY idx_devices_is_draft (is_draft),
+            KEY idx_devices_purchase_date (purchase_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          COMMENT='整机设备：一次购入（一笔总价），拆成多个部件分别出售'
+        """,
+    ),
+    (
+        "device_parts",
+        """
+        CREATE TABLE IF NOT EXISTS device_parts (
+            id        INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            device_id INT UNSIGNED NOT NULL,
+            -- cpu / gpu / ram / disk / motherboard / psu / cooler / case / other。
+            -- 一台机器里内存、硬盘常常有好几条，所以它们是这张表里的**多行**，
+            -- 而不是设备表上的多个字段——字段数写死了就装不下第三条内存。
+            part_type VARCHAR(24) NOT NULL DEFAULT 'other',
+            brand     VARCHAR(64) NULL,
+            model     VARCHAR(128) NULL COMMENT '型号，如 i9-13900K / RTX 4090',
+            spec      VARCHAR(128) NULL COMMENT '规格，如 32GB DDR5-6000 / 2TB NVMe',
+            serial_no VARCHAR(128) NULL,
+            quantity  INT NOT NULL DEFAULT 1 COMMENT '同规格几件合成一行（如 2 条 16G）',
+
+            -- 出售侧：每个部件各卖各的价，一台设备因此有多个出售价格。
+            sale_date                  DATE NULL,
+            sale_amount                DECIMAL(14,2) NULL COMMENT '这一行的出售总价（含 quantity 件）',
+            sale_currency              VARCHAR(3) NOT NULL DEFAULT 'CNY',
+            domestic_shipping_amount   DECIMAL(14,2) NULL,
+            domestic_shipping_currency VARCHAR(3) NOT NULL DEFAULT 'CNY',
+            sale_fx_rate DECIMAL(18,8) NULL COMMENT '按本行 sale_date 取的牌价快照',
+            sale_fx_date DATE NULL,
+
+            buyer      VARCHAR(128) NULL,
+            status     VARCHAR(24) NOT NULL DEFAULT 'purchased',
+            note       VARCHAR(500) NULL,
+            sort_order INT NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                           ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_device_parts_device (device_id, sort_order, id),
+            KEY idx_device_parts_type (part_type),
+            KEY idx_device_parts_sale_date (sale_date),
+            CONSTRAINT fk_device_parts_device FOREIGN KEY (device_id)
+                REFERENCES devices (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          COMMENT='设备部件明细。一台设备多行，内存/硬盘可重复出现；出售价格在这里'
+        """,
+    ),
+    (
         "fx_rates",
         """
         CREATE TABLE IF NOT EXISTS fx_rates (
@@ -271,9 +375,12 @@ _TABLES: List[Tuple[str, str]] = [
         """
         CREATE TABLE IF NOT EXISTS fund_draws (
             id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            card_id    INT UNSIGNED NULL COMMENT '归属卡片；NULL 表示与卡无关的池内支出',
+            -- 一笔扣款要么挂在一张卡上，要么挂在一台整机上，要么谁也不挂（手工记的
+            -- 池内杂项支出）。两列互斥，永远最多只有一个非 NULL。
+            card_id    INT UNSIGNED NULL COMMENT '归属卡片',
+            device_id  INT UNSIGNED NULL COMMENT '归属整机设备',
             category   VARCHAR(24) NOT NULL DEFAULT 'purchase'
-                           COMMENT 'purchase / intl_shipping 由卡片自动同步；other 为手工记账',
+                           COMMENT 'purchase / intl_shipping 由卡片/整机自动同步；other 为手工记账',
             draw_date  DATE NOT NULL COMMENT '花钱的日期，决定它能吃到哪些批次（只能用已经进池的钱）',
             amount     DECIMAL(16,2) NOT NULL COMMENT '扣掉的日元金额',
             currency   VARCHAR(3) NOT NULL DEFAULT 'JPY',
@@ -286,11 +393,16 @@ _TABLES: List[Tuple[str, str]] = [
                            ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY idx_fund_draws_date (draw_date, id),
+            -- 一卡一类一条 / 一机一类一条。MySQL 的唯一键不约束含 NULL 的行，所以
+            -- 手工支出（两列都为 NULL）以及另一种归属的行都不会被这两个键挡住。
             UNIQUE KEY uk_fund_draws_card_cat (card_id, category),
+            UNIQUE KEY uk_fund_draws_device_cat (device_id, category),
             CONSTRAINT fk_fund_draws_card FOREIGN KEY (card_id)
-                REFERENCES cards (id) ON DELETE CASCADE
+                REFERENCES cards (id) ON DELETE CASCADE,
+            CONSTRAINT fk_fund_draws_device FOREIGN KEY (device_id)
+                REFERENCES devices (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-          COMMENT='从资金池扣款。卡片侧的两类跟着卡上的金额自动同步，删卡即级联删除'
+          COMMENT='从资金池扣款。卡片/整机侧的两类跟着各自的金额自动同步，删除时级联清掉'
         """,
     ),
     (
@@ -335,6 +447,11 @@ _MIGRATIONS: List[Tuple[str, str, str]] = [
     ("cards", "pool_purchase_cny", "pool_purchase_cny DECIMAL(14,2) NULL"),
     ("cards", "pool_intl_cny", "pool_intl_cny DECIMAL(14,2) NULL"),
     ("cards", "pool_fx_rate", "pool_fx_rate DECIMAL(18,8) NULL"),
+    ("devices", "fund_source", "fund_source VARCHAR(8) NOT NULL DEFAULT 'own'"),
+    ("devices", "pool_purchase_cny", "pool_purchase_cny DECIMAL(14,2) NULL"),
+    ("devices", "pool_intl_cny", "pool_intl_cny DECIMAL(14,2) NULL"),
+    ("devices", "pool_fx_rate", "pool_fx_rate DECIMAL(18,8) NULL"),
+    ("fund_draws", "device_id", "device_id INT UNSIGNED NULL"),
 ]
 
 
@@ -383,6 +500,29 @@ def _migrate_gpu_models_standalone() -> None:
         db.execute("ALTER TABLE gpu_models ADD UNIQUE KEY uk_gpu_models_name (name)")
 
 
+def _migrate_fund_draws_devices() -> None:
+    """给已存在的 fund_draws 补上整机归属所需的唯一键与外键。
+
+    device_id 这一列由 _MIGRATIONS 补上，但唯一键和外键 ALTER 不了已建好的表
+    （CREATE TABLE IF NOT EXISTS 对老表是空操作），只能在这里按需加。
+    """
+    if not _has_column("fund_draws", "device_id"):
+        return  # 列还没补上（建表刚失败？），索引无从谈起
+    if not _has_index("fund_draws", "uk_fund_draws_device_cat"):
+        log.info("迁移：fund_draws 增加整机侧唯一键")
+        db.execute("ALTER TABLE fund_draws ADD UNIQUE KEY uk_fund_draws_device_cat (device_id, category)")
+    has_fk = int(db.query_scalar(
+        "SELECT COUNT(*) AS c FROM information_schema.TABLE_CONSTRAINTS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_draws' "
+        "AND CONSTRAINT_NAME = 'fk_fund_draws_device'", default=0) or 0)
+    if not has_fk:
+        log.info("迁移：fund_draws 增加指向 devices 的外键")
+        db.execute(
+            "ALTER TABLE fund_draws ADD CONSTRAINT fk_fund_draws_device "
+            "FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE CASCADE"
+        )
+
+
 def init() -> None:
     """建库 → 建表 → 补列 → 结构迁移 → 灌入首次运行的种子数据。可重复执行。"""
     db.ensure_database()
@@ -392,23 +532,30 @@ def init() -> None:
     for table, column, ddl in _MIGRATIONS:
         _ensure_column(table, column, ddl)
     _migrate_gpu_models_standalone()
+    _migrate_fund_draws_devices()
     _cleanup_stale_drafts()
     _seed()
 
 
 def _cleanup_stale_drafts() -> None:
-    """清掉超过 2 小时没定稿的草稿卡。
+    """清掉超过 2 小时没定稿的草稿（卡片与整机都算）。
 
     正常流程里草稿要么保存（转正）、要么关弹窗时被删；只有「开了新增弹窗又直接关掉浏览器」
     才会残留。2 小时的阈值保证正在编辑中的草稿（刚建几秒）不会被误删，即使期间热重载了。
-    连带 card_media 由外键级联删除；图床上的文件成孤儿（可接受，仅占空间）。
+    连带 card_media / device_parts 由外键级联删除；图床上的文件成孤儿（可接受，仅占空间）。
     """
     try:
-        removed = db.execute(
+        removed_devices = db.execute(
+            "DELETE FROM devices WHERE is_draft = 1 AND created_at < (NOW() - INTERVAL 2 HOUR)"
+        )
+        if removed_devices:
+            log.info("清理了 %d 台过期草稿设备", removed_devices)
+        removed_cards = db.execute(
             "DELETE FROM cards WHERE is_draft = 1 AND created_at < (NOW() - INTERVAL 2 HOUR)"
         )
-        if removed:
-            log.info("清理了 %d 张过期草稿卡", removed)
+        if removed_cards:
+            log.info("清理了 %d 张过期草稿卡", removed_cards)
+        if removed_cards or removed_devices:
             # 草稿上若开过「从资金池扣除」，它的扣款刚被外键连带删掉了：重算一次，
             # 把那笔钱还给池子，后面的扣款也才吃得到。在函数里 import 是为了避开
             # funds → schema 的循环依赖。
@@ -416,7 +563,7 @@ def _cleanup_stale_drafts() -> None:
 
             funds.rebuild()
     except Exception as exc:  # noqa: BLE001  清理失败不该拖垮启动
-        log.warning("清理草稿卡失败：%s", exc)
+        log.warning("清理草稿失败：%s", exc)
 
 
 def _seed() -> None:

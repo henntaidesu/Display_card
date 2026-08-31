@@ -86,7 +86,7 @@ const menuItems = [
   { path: '/settings', titleKey: 'route.settings', icon: 'Setting' }
 ]
 
-// 详情页 /cards/:id 高亮到「显卡库存」
+// 详情页 /cards/:id 高亮到「设备库存」
 const activePath = computed(() => {
   if (route.path.startsWith('/cards')) return '/cards'
   return route.path

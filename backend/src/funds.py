@@ -8,8 +8,8 @@
 **模型**（三张表）：
 
 - ``fund_injections`` 注资批次：一次换汇进池一条，带自己那天的汇率快照。
-- ``fund_draws`` 扣款：卡片侧的「购入价 / 国际运费」跟着卡自动同步（一卡一类一条），
-  另有手工记的池内杂项支出。
+- ``fund_draws`` 扣款：卡片与整机侧的「购入价 / 国际运费」跟着各自的金额自动同步
+  （一卡一类一条 / 一机一类一条），另有手工记的池内杂项支出。
 - ``fund_allocations`` 分摊明细：一笔扣款按 FIFO 拆到若干批次上，每段带该批次的汇率。
 
 **FIFO 与两条硬规则**：
@@ -23,8 +23,9 @@
 维护。理由是「补录一笔上个月的注资」会改变它之后所有扣款的分摊结果，增量算法要处理
 的回溯情形远比全量重算复杂，而这个系统的数据量（几百条）重算一次不到几十毫秒。
 
-算完把每张卡的分摊结果回写到 ``cards.pool_purchase_cny / pool_intl_cny /
-pool_fx_rate``，列表页和统计就不用为每一行再查一次明细（N+1）。
+算完把分摊结果回写到 ``cards`` / ``devices`` 的 ``pool_purchase_cny / pool_intl_cny /
+pool_fx_rate``，列表页和统计就不用为每一行再查一次明细（N+1）。两张表的这三列同名同义，
+所以下面的同步与回写都写成「按归属方」的一套代码，而不是复制两份。
 """
 
 from __future__ import annotations
@@ -43,10 +44,17 @@ log = logging.getLogger(__name__)
 _CENT = Decimal("0.01")
 _ZERO = Decimal("0")
 
-# 卡片侧由系统自动同步的两类扣款 → 回写到卡片行上的哪一列
+# 由系统自动同步的两类扣款 → 回写到归属行上的哪一列
 _CARD_CATEGORIES = {
     "purchase": "pool_purchase_cny",
     "intl_shipping": "pool_intl_cny",
+}
+
+# 扣款的两种归属：卡片和整机。值是 (外键列, 目标表)。两张表的分摊快照列同名，
+# 所以同步与回写共用一套代码，只有这两个名字不同。
+_OWNERS = {
+    "card": ("card_id", "cards"),
+    "device": ("device_id", "devices"),
 }
 
 
@@ -225,25 +233,31 @@ def _market_rate_lookup():
 
 
 def rebuild() -> Dict[str, Any]:
-    """整体重算全部分摊，并把结果回写到扣款行与卡片行。可重复执行，结果幂等。"""
+    """整体重算全部分摊，并把结果回写到扣款行与它的归属行。可重复执行，结果幂等。"""
     injections = db.query(
         "SELECT id, inject_date, amount, fx_rate FROM fund_injections "
         "ORDER BY inject_date, id"
     )
     draws = db.query(
-        "SELECT id, card_id, category, draw_date, amount FROM fund_draws "
+        "SELECT id, card_id, device_id, category, draw_date, amount FROM fund_draws "
         "ORDER BY draw_date, id"
     )
     allocations, results = allocate(injections, draws, _market_rate_lookup())
 
-    # 每张卡把它的两类扣款汇总起来，一次性回写
-    card_values: Dict[int, Dict[str, Any]] = {}
+    # 每个归属方（一张卡 / 一台整机）把它的两类扣款汇总起来，一次性回写。
+    # key 里带上归属类型：卡片和整机的 id 各自从 1 开始，只用 id 会把两者混在一起。
+    owner_values: Dict[Tuple[str, int], Dict[str, Any]] = {}
     for res in results:
         draw = res["draw"]
-        card_id = draw.get("card_id")
-        if not card_id or draw["category"] not in _CARD_CATEGORIES:
+        if draw["category"] not in _CARD_CATEGORIES:
             continue
-        bucket = card_values.setdefault(int(card_id), {
+        owner = next(
+            ((kind, int(draw[col])) for kind, (col, _t) in _OWNERS.items() if draw.get(col)),
+            None,
+        )
+        if owner is None:
+            continue  # 手工记的池内支出，不属于任何一行
+        bucket = owner_values.setdefault(owner, {
             "pool_purchase_cny": None, "pool_intl_cny": None,
             "_jpy": _ZERO, "_cny": _ZERO, "_broken": False,
         })
@@ -269,21 +283,23 @@ def rebuild() -> Dict[str, Any]:
                 "UPDATE fund_draws SET cny_amount = %s, shortfall = %s WHERE id = %s",
                 (res["cny_amount"], res["shortfall"], res["draw"]["id"]),
             )
-        # 先把所有卡的分摊快照清空，再写回有扣款的那些：漏清的话，一张卡改回「自有资金」
+        # 先把两张表的分摊快照都清空，再写回有扣款的那些：漏清的话，一行改回「自有资金」
         # 之后仍留着上一次的池成本，成本就永远停在旧值上。
-        cur.execute(
-            "UPDATE cards SET pool_purchase_cny = NULL, pool_intl_cny = NULL, pool_fx_rate = NULL "
-            "WHERE pool_purchase_cny IS NOT NULL OR pool_intl_cny IS NOT NULL "
-            "OR pool_fx_rate IS NOT NULL"
-        )
-        for card_id, bucket in card_values.items():
+        for _col, table in _OWNERS.values():
+            cur.execute(
+                f"UPDATE {table} SET pool_purchase_cny = NULL, pool_intl_cny = NULL, "
+                f"pool_fx_rate = NULL WHERE pool_purchase_cny IS NOT NULL "
+                f"OR pool_intl_cny IS NOT NULL OR pool_fx_rate IS NOT NULL"
+            )
+        for (kind, owner_id), bucket in owner_values.items():
             rate = None
             if not bucket["_broken"] and bucket["_cny"] > 0 and bucket["_jpy"] > 0:
                 rate = bucket["_jpy"] / bucket["_cny"]
+            # 表名来自 _OWNERS 这张固定的表，不是外部输入，拼进 SQL 是安全的
             cur.execute(
-                "UPDATE cards SET pool_purchase_cny = %s, pool_intl_cny = %s, pool_fx_rate = %s "
-                "WHERE id = %s",
-                (bucket["pool_purchase_cny"], bucket["pool_intl_cny"], rate, card_id),
+                f"UPDATE {_OWNERS[kind][1]} SET pool_purchase_cny = %s, pool_intl_cny = %s, "
+                f"pool_fx_rate = %s WHERE id = %s",
+                (bucket["pool_purchase_cny"], bucket["pool_intl_cny"], rate, owner_id),
             )
 
     warnings: List[str] = []
@@ -296,21 +312,27 @@ def rebuild() -> Dict[str, Any]:
     return {
         "draws": len(results),
         "allocations": len(allocations),
-        "cards": len(card_values),
+        "owners": len(owner_values),
         "warnings": warnings,
     }
 
 
-# ── 卡片侧扣款的同步 ────────────────────────────────────────────────────── #
+# ── 归属方（卡片 / 整机）扣款的同步 ─────────────────────────────────────── #
 
-def sync_card_draws(card_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
-    """让一张卡的池内扣款与卡上的金额保持一致，返回是否发生了改动。
+def sync_owner_draws(kind: str, owner_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
+    """让一张卡 / 一台整机的池内扣款与它上面的金额保持一致，返回是否发生了改动。
 
-    「一卡一类一条」由唯一键 uk_fund_draws_card_cat 保证，所以这里按 category 做
-    upsert 而不是先删后插——先删后插会让 id 每次保存都变，分摊明细也就没法追溯了。
-    只有日元金额进池：资金池装的是日元，人民币支出与它无关（照常走原来的牌价折算）。
+    卡片和整机在这件事上完全同构：都有 fund_source、purchase_amount、
+    intl_shipping_amount 和对应的币种，区别只是扣款行挂在哪一列上。所以这里写成
+    一套，靠 ``_OWNERS`` 里的 (外键列, 表名) 分流——复制两份的下场是改了一边忘了
+    另一边，而这种账目上的不一致要等到对不上数才会被发现。
+
+    「一卡一类一条 / 一机一类一条」由唯一键保证，所以这里按 category 做 upsert 而不是
+    先删后插——先删后插会让 id 每次保存都变，分摊明细也就没法追溯了。
+    只有日元金额进池：池子装的是日元，人民币支出与它无关（照旧走牌价折算）。
     """
-    row = row or db.query_one("SELECT * FROM cards WHERE id = %s", (card_id,))
+    col, table = _OWNERS[kind]
+    row = row or db.query_one(f"SELECT * FROM {table} WHERE id = %s", (owner_id,))
     if not row:
         return False
     use_pool = (row.get("fund_source") or "own") == "pool"
@@ -329,7 +351,8 @@ def sync_card_draws(card_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
 
     existing = {
         r["category"]: r for r in db.query(
-            "SELECT id, category, draw_date, amount FROM fund_draws WHERE card_id = %s", (card_id,)
+            f"SELECT id, category, draw_date, amount FROM fund_draws WHERE {col} = %s",
+            (owner_id,),
         )
     }
     changed = False
@@ -344,9 +367,9 @@ def sync_card_draws(card_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
             continue
         if not have:
             db.insert(
-                "INSERT INTO fund_draws (card_id, category, draw_date, amount, currency) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (card_id, category, draw_date, want, POOL_CURRENCY),
+                f"INSERT INTO fund_draws ({col}, category, draw_date, amount, currency) "
+                f"VALUES (%s, %s, %s, %s, %s)",
+                (owner_id, category, draw_date, want, POOL_CURRENCY),
             )
             changed = True
         elif _dec(have["amount"]) != want or have["draw_date"] != draw_date:
@@ -359,17 +382,29 @@ def sync_card_draws(card_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
     return changed
 
 
-def sync_card_and_rebuild(card_id: int, row: Optional[Dict[str, Any]] = None) -> None:
-    """存卡后调用：同步扣款，真的有变化时才重算。
+def sync_and_rebuild(kind: str, owner_id: int, row: Optional[Dict[str, Any]] = None) -> None:
+    """存卡 / 存整机后调用：同步扣款，真的有变化时才重算。
 
     「有变化才重算」不只是省事——保存是防抖自动触发的（改一个字段就是一次 PUT），
     每次都全量重算会把大量无谓的写打到库上。
     """
     try:
-        if sync_card_draws(card_id, row):
+        if sync_owner_draws(kind, owner_id, row):
             rebuild()
-    except Exception as exc:  # noqa: BLE001  资金池算不动不该让存卡失败
-        log.warning("同步卡片 %s 的资金池扣款失败：%s", card_id, exc)
+    except Exception as exc:  # noqa: BLE001  资金池算不动不该让保存失败
+        log.warning("同步%s %s 的资金池扣款失败：%s", kind, owner_id, exc)
+
+
+def sync_card_draws(card_id: int, row: Optional[Dict[str, Any]] = None) -> bool:
+    return sync_owner_draws("card", card_id, row)
+
+
+def sync_card_and_rebuild(card_id: int, row: Optional[Dict[str, Any]] = None) -> None:
+    sync_and_rebuild("card", card_id, row)
+
+
+def sync_device_and_rebuild(device_id: int, row: Optional[Dict[str, Any]] = None) -> None:
+    sync_and_rebuild("device", device_id, row)
 
 
 # ── 查询 ────────────────────────────────────────────────────────────────── #
@@ -429,15 +464,30 @@ def _draw_allocations(draw_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
     return grouped
 
 
-def list_draws(card_id: Optional[int] = None, limit: int = 300) -> List[Dict[str, Any]]:
-    """扣款列表，每笔带它的分段明细（吃了哪几批钱、各按什么汇率折算）。"""
+def list_draws(
+    card_id: Optional[int] = None,
+    device_id: Optional[int] = None,
+    limit: int = 300,
+) -> List[Dict[str, Any]]:
+    """扣款列表，每笔带它的分段明细（吃了哪几批钱、各按什么汇率折算）。
+
+    每行都带上归属方：``owner_kind`` 是 card / device / None（手工记的池内支出），
+    ``owner_name`` 与 ``mgmt_no`` 取自对应的那张表——前端只看这三个字段就能显示，
+    不必自己判断该读 card 还是 device 的哪个字段。
+    """
     where, params = "", []
     if card_id:
         where = " WHERE d.card_id = %s"
         params.append(card_id)
+    elif device_id:
+        where = " WHERE d.device_id = %s"
+        params.append(device_id)
     rows = db.query(
-        "SELECT d.*, c.mgmt_no, c.brand, c.model FROM fund_draws d "
-        "LEFT JOIN cards c ON c.id = d.card_id"
+        "SELECT d.*, c.mgmt_no AS card_mgmt_no, c.brand, c.model, "
+        "       v.mgmt_no AS device_mgmt_no, v.title AS device_title "
+        "FROM fund_draws d "
+        "LEFT JOIN cards c ON c.id = d.card_id "
+        "LEFT JOIN devices v ON v.id = d.device_id"
         f"{where} ORDER BY d.draw_date DESC, d.id DESC LIMIT %s",
         params + [limit],
     )
@@ -446,11 +496,23 @@ def list_draws(card_id: Optional[int] = None, limit: int = 300) -> List[Dict[str
     for row in rows:
         amount = _dec(row["amount"]) or _ZERO
         cny = _dec(row["cny_amount"])
+        if row["card_id"]:
+            owner_kind = "card"
+            owner_name = " ".join(x for x in (row["brand"], row["model"]) if x) or None
+            mgmt_no = row["card_mgmt_no"]
+        elif row["device_id"]:
+            owner_kind = "device"
+            owner_name = row["device_title"]
+            mgmt_no = row["device_mgmt_no"]
+        else:
+            owner_kind, owner_name, mgmt_no = None, None, None
         out.append({
             "id": row["id"],
             "card_id": row["card_id"],
-            "mgmt_no": row["mgmt_no"],
-            "card_name": " ".join(x for x in (row["brand"], row["model"]) if x) or None,
+            "device_id": row["device_id"],
+            "owner_kind": owner_kind,
+            "owner_name": owner_name,
+            "mgmt_no": mgmt_no,
             "category": row["category"],
             "draw_date": _iso(row["draw_date"]),
             "amount": _float(amount),
@@ -467,6 +529,10 @@ def list_draws(card_id: Optional[int] = None, limit: int = 300) -> List[Dict[str
 
 def card_draws(card_id: int) -> List[Dict[str, Any]]:
     return list_draws(card_id=card_id)
+
+
+def device_draws(device_id: int) -> List[Dict[str, Any]]:
+    return list_draws(device_id=device_id)
 
 
 def summary() -> Dict[str, Any]:

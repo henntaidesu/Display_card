@@ -11,7 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -75,6 +75,12 @@ def mount_spa(app: FastAPI) -> None:
         仍然要处理 full_path：favicon.ico、logo.svg 这类根目录下的实体文件要真的
         发出去，只有它们不存在时才回 index.html。
         """
+        # 没匹配上的接口路径必须 404，绝不能回 index.html：那会让前端拿到一个
+        # 200 + 一整页 HTML，当成正常响应去读字段，于是每个字段都是 undefined，
+        # 页面以各种离奇的方式坏掉（分页器直接不渲染之类），而真正的原因
+        # ——「这个接口不存在 / 后端还没重启」——一点线索都看不到。
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail=f"接口不存在：/{full_path}")
         candidate = (dist / full_path).resolve()
         # 必须做前缀校验：不然 ../../conf.ini 这样的路径能把 MySQL 密码读出去。
         if full_path and candidate.is_file() and str(candidate).startswith(str(dist.resolve())):

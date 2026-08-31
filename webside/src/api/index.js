@@ -21,6 +21,27 @@ export const cardsApi = {
   nextMgmtNo: () => http.get('/cards/next-mgmt-no')
 }
 
+// 库存合并列表：显卡与整机在同一张表里，行上带 kind 区分。筛选、排序、分页
+// 都在后端统一做，前端不必自己把两个列表拼起来。
+export const inventoryApi = {
+  list: (params) => http.get('/inventory', { params }),
+  stats: (params) => http.get('/inventory/stats', { params })
+}
+
+// 整机设备的增删改查：一次购入（一个总价）拆成多个部件分别出售。部件随设备整体
+// 提交，保存时后端按提交的数组整体覆盖 device_parts。列表走上面的 inventoryApi。
+export const devicesApi = {
+  get: (id) => http.get(`/devices/${id}`),
+  create: (payload) => http.post('/devices', payload),
+  // 新增弹窗打开即建的空草稿设备，只为拿到 id 与管理编号
+  createDraft: () => http.post('/devices/draft'),
+  update: (id, payload) => http.put(`/devices/${id}`, payload),
+  changeStatus: (id, payload) => http.patch(`/devices/${id}/status`, payload),
+  refreshFx: (id) => http.post(`/devices/${id}/refresh-fx`),
+  remove: (id) => http.delete(`/devices/${id}`),
+  nextMgmtNo: () => http.get('/devices/next-mgmt-no')
+}
+
 export const mediaApi = {
   // 上传走 multipart，交给调用方自己构造 FormData
   upload: (formData) =>

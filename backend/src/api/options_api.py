@@ -17,6 +17,7 @@ from src.auth import require_auth
 from src.schema import (
     CARD_STATUSES,
     CURRENCIES,
+    DEVICE_PART_TYPES,
     FUND_DRAW_CATEGORIES,
     FUND_SOURCES,
     MEDIA_CATEGORIES,
@@ -44,6 +45,7 @@ def enums():
     return {
         "statuses": CARD_STATUSES,
         "media_categories": MEDIA_CATEGORIES,
+        "device_part_types": DEVICE_PART_TYPES,
         "source_platforms": SOURCE_PLATFORMS,
         "currencies": CURRENCIES,
         "fund_sources": FUND_SOURCES,

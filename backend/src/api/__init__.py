@@ -11,7 +11,9 @@ from src.api import (
     auth_api,
     cards_api,
     dashboard_api,
+    devices_api,
     funds_api,
+    inventory_api,
     fx_api,
     media_api,
     options_api,
@@ -22,6 +24,8 @@ router = APIRouter(prefix="/api/v1")
 
 router.include_router(auth_api.router)
 router.include_router(cards_api.router)
+router.include_router(devices_api.router)
+router.include_router(inventory_api.router)
 router.include_router(media_api.router)
 router.include_router(fx_api.router)
 router.include_router(funds_api.router)

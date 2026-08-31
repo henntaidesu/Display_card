@@ -46,8 +46,8 @@ class InjectionPayload(BaseModel):
 class DrawPayload(BaseModel):
     """手工记的池内支出（手续费、代购费…）。
 
-    卡片的购入价与国际运费**不走这里**——那两类由卡片上的「从资金池扣除」开关自动
-    同步，手工再记一笔就会重复扣钱。
+    卡片与整机的购入价、国际运费**不走这里**——那两类由各自表单上的「从资金池扣除」
+    开关自动同步，手工再记一笔就会重复扣钱。
     """
 
     draw_date: dt.date
@@ -138,16 +138,17 @@ def delete_injection(injection_id: int):
 @router.get("/draws")
 def list_draws(
     card_id: Optional[int] = Query(default=None),
+    device_id: Optional[int] = Query(default=None),
     limit: int = Query(default=300, ge=1, le=1000),
 ):
-    return {"items": funds.list_draws(card_id=card_id, limit=limit)}
+    return {"items": funds.list_draws(card_id=card_id, device_id=device_id, limit=limit)}
 
 
 @router.post("/draws")
 def create_draw(payload: DrawPayload):
     db.insert(
-        "INSERT INTO fund_draws (card_id, category, draw_date, amount, currency, note) "
-        "VALUES (NULL, 'other', %s, %s, %s, %s)",
+        "INSERT INTO fund_draws (card_id, device_id, category, draw_date, amount, currency, note) "
+        "VALUES (NULL, NULL, 'other', %s, %s, %s, %s)",
         (payload.draw_date, payload.amount, POOL_CURRENCY, _clean(payload.note)),
     )
     return _state()
@@ -155,13 +156,14 @@ def create_draw(payload: DrawPayload):
 
 @router.put("/draws/{draw_id}")
 def update_draw(draw_id: int, payload: DrawPayload):
-    existing = db.query_one("SELECT id, category, card_id FROM fund_draws WHERE id = %s", (draw_id,))
+    existing = db.query_one(
+        "SELECT id, category, card_id, device_id FROM fund_draws WHERE id = %s", (draw_id,))
     if not existing:
         raise HTTPException(status_code=404, detail="扣款记录不存在")
-    if existing["card_id"]:
+    if existing["card_id"] or existing["device_id"]:
         raise HTTPException(
             status_code=400,
-            detail="这笔扣款跟着卡片走，请到对应显卡上修改金额或关闭「从资金池扣除」。",
+            detail="这笔扣款跟着显卡 / 整机走，请到对应的那条记录上修改金额或关闭「从资金池扣除」。",
         )
     db.execute(
         "UPDATE fund_draws SET draw_date = %s, amount = %s, note = %s WHERE id = %s",
@@ -172,13 +174,14 @@ def update_draw(draw_id: int, payload: DrawPayload):
 
 @router.delete("/draws/{draw_id}")
 def delete_draw(draw_id: int):
-    existing = db.query_one("SELECT id, card_id FROM fund_draws WHERE id = %s", (draw_id,))
+    existing = db.query_one(
+        "SELECT id, card_id, device_id FROM fund_draws WHERE id = %s", (draw_id,))
     if not existing:
         raise HTTPException(status_code=404, detail="扣款记录不存在")
-    if existing["card_id"]:
+    if existing["card_id"] or existing["device_id"]:
         raise HTTPException(
             status_code=400,
-            detail="这笔扣款跟着卡片走，请到对应显卡上关闭「从资金池扣除」。",
+            detail="这笔扣款跟着显卡 / 整机走，请到对应的那条记录上关闭「从资金池扣除」。",
         )
     db.execute("DELETE FROM fund_draws WHERE id = %s", (draw_id,))
     return _state()

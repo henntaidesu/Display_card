@@ -100,11 +100,20 @@
             </el-table-column>
             <el-table-column :label="t('funds.purpose')" min-width="150">
               <template #default="{ row }">
+                <!-- 扣款要么挂在一张卡上（有详情页，可点进去），要么挂在一台整机上
+                     （没有详情页，只显示名字），要么是手工记的池内支出 -->
                 <router-link v-if="row.card_id" :to="`/cards/${row.card_id}`" class="link" @click.stop>
-                  {{ row.card_name || row.mgmt_no }}
+                  {{ row.owner_name || row.mgmt_no }}
                 </router-link>
+                <span v-else-if="row.device_id">{{ row.owner_name || row.mgmt_no }}</span>
                 <span v-else>{{ row.note || t('funds.cat.other') }}</span>
-                <div class="dc-dim sub">{{ t('funds.cat.' + row.category) }}</div>
+                <div class="dc-dim sub">
+                  <el-tag v-if="row.owner_kind" size="small" effect="plain"
+                    :type="row.owner_kind === 'device' ? 'warning' : 'primary'" class="owner-tag">
+                    {{ t('inv.' + row.owner_kind) }}
+                  </el-tag>
+                  {{ t('funds.cat.' + row.category) }}
+                </div>
               </template>
             </el-table-column>
             <el-table-column :label="t('funds.amount')" align="right" min-width="110">
@@ -118,11 +127,11 @@
             </el-table-column>
             <el-table-column :label="t('common.actions')" width="86" align="center">
               <template #default="{ row }">
-                <template v-if="!row.card_id">
+                <template v-if="!row.owner_kind">
                   <el-button link :icon="EditPen" @click="openDraw(row)" />
                   <el-button link type="danger" :icon="Delete" @click="removeDraw(row)" />
                 </template>
-                <el-tooltip v-else :content="t('funds.cardDrawLocked')">
+                <el-tooltip v-else :content="t('funds.ownerDrawLocked')">
                   <el-icon class="dc-dim"><Lock /></el-icon>
                 </el-tooltip>
               </template>
@@ -382,6 +391,7 @@ onMounted(reload)
 .count { font-size: 12px; }
 .sub { font-size: 11px; }
 .tag { margin-left: 4px; transform: scale(0.85); }
+.owner-tag { margin-right: 4px; transform: scale(0.85); transform-origin: left center; }
 .link { color: #8fb8ff; text-decoration: none; }
 .link:hover { text-decoration: underline; }
 .full { width: 100% !important; }
