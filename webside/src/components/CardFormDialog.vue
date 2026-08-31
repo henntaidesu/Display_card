@@ -1,12 +1,21 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="isEdit ? t('card.editTitle') : t('card.addTitle')"
+    :title="props.card ? t('card.editTitle') : t('card.addTitle')"
     width="820px"
     top="6vh"
-    :close-on-click-modal="false"
+    :close-on-click-modal="true"
     @closed="onClosed"
   >
+    <template #header>
+      <div class="dialog-header">
+        <span class="dialog-title">{{ props.card ? t('card.editTitle') : t('card.addTitle') }}</span>
+        <span class="autosave" :class="{ active: saving }">
+          <template v-if="saving"><el-icon class="spin"><Loading /></el-icon>{{ t('card.saving') }}</template>
+          <template v-else-if="savedOnce"><el-icon><Select /></el-icon>{{ t('card.autoSaved') }}</template>
+        </span>
+      </div>
+    </template>
     <el-form ref="formRef" :model="form" label-position="top" class="card-form">
       <!-- 基本信息 -->
       <div class="section-title">{{ t('card.mgmtNo') }}</div>
@@ -90,9 +99,27 @@
           <MoneyInput v-model:amount="form.intl_shipping_amount" v-model:currency="form.intl_shipping_currency" :label="t('card.intlShipping')" />
         </el-col>
       </el-row>
-      <div v-if="fxPreview.purchase" class="fx-hint">
+      <div v-if="fxPreview.purchase && !usePool" class="fx-hint">
         {{ t('card.fxPreview') }}: 1 {{ t('currency.CNY_short') }} = {{ formatRate(fxPreview.purchase.rate) }} {{ t('currency.JPY_short') }}
         <span class="dc-dim">（{{ fxPreview.purchase.rate_date }}{{ fxPreview.purchase.stale ? ' *' : '' }}）</span>
+      </div>
+
+      <!-- 资金来源。开着的时候这张卡的日元支出从资金池扣，成本改按被吃掉的那几批
+           注资各自的换汇价折算，买卡当天的市场牌价不再参与计算。 -->
+      <div class="pool-row">
+        <el-switch v-model="usePool" />
+        <span class="pool-label">{{ t('card.fundPool') }}</span>
+        <span v-if="poolSummary" class="dc-dim pool-balance">
+          {{ t('card.poolBalance') }} <b class="dc-mono">{{ jpyText(poolSummary.balance) }}</b>
+        </span>
+      </div>
+      <div v-if="usePool" class="fx-hint pool-hint">
+        <div>{{ t('card.fundPoolHint') }}</div>
+        <div v-if="poolCurrencyMismatch" class="pool-warn">{{ t('card.poolCurrencyWarn') }}</div>
+        <div v-if="poolCost !== null">
+          {{ t('card.poolCost') }}: <b class="dc-mono">{{ cnyText(poolCost) }}</b>
+          <span v-if="poolRate" class="dc-dim">（{{ t('card.poolRate') }} {{ formatRate(poolRate) }}）</span>
+        </div>
       </div>
 
       <!-- 出售信息 -->
@@ -116,24 +143,6 @@
         <span class="dc-dim">（{{ fxPreview.sale.rate_date }}{{ fxPreview.sale.stale ? ' *' : '' }}）</span>
       </div>
 
-      <el-collapse class="manual-fx">
-        <el-collapse-item :title="t('card.fxManual')">
-          <el-row :gutter="16">
-            <el-col :xs="24" :sm="12">
-              <el-form-item :label="t('card.purchaseFx')">
-                <el-input-number v-model="form.purchase_fx_rate" :precision="6" :step="0.001" :controls="false" class="full" />
-              </el-form-item>
-            </el-col>
-            <el-col :xs="24" :sm="12">
-              <el-form-item :label="t('card.saleFx')">
-                <el-input-number v-model="form.sale_fx_rate" :precision="6" :step="0.001" :controls="false" class="full" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-          <p class="dc-dim manual-hint">{{ t('card.fxManualHint') }}</p>
-        </el-collapse-item>
-      </el-collapse>
-
       <el-form-item :label="t('card.note')">
         <el-input v-model="form.note" type="textarea" :rows="2" />
       </el-form-item>
@@ -143,12 +152,13 @@
         <el-icon><Picture /></el-icon>{{ t('card.media') }}
       </div>
       <MediaManager
-        v-if="isEdit"
+        v-if="form.id"
         ref="mediaRef"
         :card-id="form.id"
         :hosting-configured="hostingConfigured"
         @changed="$emit('media-changed')"
       />
+      <!-- 兜底：草稿卡没建成（后端不可用）时才出现，提示先保存 -->
       <div v-else class="media-placeholder">
         <el-icon :size="34"><UploadFilled /></el-icon>
         <p class="media-placeholder-hint">{{ t('card.mediaHint') }}</p>
@@ -157,22 +167,14 @@
         </div>
       </div>
     </el-form>
-
-    <template #footer>
-      <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
-      <el-button type="primary" :loading="saving" @click="onSave">
-        {{ isEdit ? t('common.save') : t('card.saveToUpload') }}
-      </el-button>
-    </template>
   </el-dialog>
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { cardsApi, fxApi, optionsApi } from '@/api'
-import { ElMessage } from '@/utils/notify'
-import { formatRate } from '@/utils/format'
+import { cardsApi, fundsApi, fxApi, optionsApi } from '@/api'
+import { cny, formatMoney, formatRate } from '@/utils/format'
 import { useMetaStore } from '@/stores/meta'
 import MediaManager from './MediaManager.vue'
 import MoneyInput from './MoneyInput.vue'
@@ -192,7 +194,6 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v)
 })
 
-const isEdit = computed(() => Boolean(form.id))
 const brands = computed(() => meta.brands)
 const statuses = computed(() => meta.enums.statuses || [])
 const platforms = computed(() => meta.enums.source_platforms || [])
@@ -203,9 +204,103 @@ const mediaCategories = computed(() =>
 )
 const models = ref([])
 const saving = ref(false)
+// 资金池：池子总账（显示余额）+ 最近一次保存返回的金额，用来把「这张卡实际折了多少
+// 人民币」直接回显在表单里——分摊要在后端按 FIFO 算完才知道，前端算不出来。
+const poolSummary = ref(null)
+const savedMoney = ref(null)
+const savedOnce = ref(false)
 const formRef = ref()
 const mediaRef = ref()
+// 草稿态：新增时先建的空卡。保存即定稿（转 false）；未保存就关闭则删掉这张草稿。
+const isDraft = ref(false)
 const fxPreview = reactive({ purchase: null, sale: null })
+
+const usePool = computed({
+  get: () => form.fund_source === 'pool',
+  set: (v) => { form.fund_source = v ? 'pool' : 'own' }
+})
+// 池子里是日元，人民币支付的部分与它无关：开着开关但币种选了人民币时要说清楚
+const poolCurrencyMismatch = computed(() =>
+  usePool.value && form.purchase_currency !== 'JPY' && form.purchase_amount
+)
+const poolCost = computed(() => {
+  const m = savedMoney.value
+  if (!m || !m.from_pool) return null
+  const parts = [m.purchase_cny, m.intl_shipping_cny].filter((v) => v !== null && v !== undefined)
+  return parts.length ? parts.reduce((a, b) => a + b, 0) : null
+})
+const poolRate = computed(() => savedMoney.value?.pool_fx_rate || null)
+const jpyText = (v) => formatMoney(v, 'JPY')
+const cnyText = (v) => cny(v)
+
+async function loadPoolSummary() {
+  try {
+    poolSummary.value = await fundsApi.summary()
+  } catch {
+    poolSummary.value = null
+  }
+}
+
+// ── 实时自动保存 ──────────────────────────────────────────────────────────
+// 表单没有保存按钮：任何改动都防抖后自动 PUT。formReady 用来跳过「打开弹窗时
+// 填充表单」引起的那次 watch，避免刚打开就误存一遍。dirty 标记有未落盘的改动。
+let saveTimer = null
+let savingInflight = false
+const formReady = ref(false)
+const dirty = ref(false)
+const AUTOSAVE_DELAY = 600
+
+function scheduleAutoSave() {
+  if (!formReady.value || !visible.value) return
+  dirty.value = true
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(doSave, AUTOSAVE_DELAY)
+}
+
+async function doSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  // 同一时刻只跑一条保存链；已在跑时直接返回，正在跑的循环会自查 dirty 继续存。
+  if (savingInflight || !dirty.value) return
+  savingInflight = true
+  saving.value = true
+  // 循环直到没有新改动：存的过程中（await 期间）用户又改了，dirty 会再次置真，
+  // 循环继续把最新值也存掉，避免「存旧值 + 丢最后一次改动」。
+  while (dirty.value) {
+    dirty.value = false
+    try {
+      const payload = { ...form }
+      delete payload.mgmt_no
+      let result
+      if (form.id) {
+        result = await cardsApi.update(form.id, payload)
+      } else {
+        result = await cardsApi.create(payload)  // 草稿没建成的兜底
+        form.id = result.id
+        form.mgmt_no = result.mgmt_no
+      }
+      savedMoney.value = result?.money || null
+      // 池子余额被这张卡的扣款改动了，顺手刷一次；不走资金池就没必要多打这个请求
+      if (form.fund_source === 'pool') loadPoolSummary()
+      isDraft.value = false   // 有内容了，不再是待删的空草稿
+      savedOnce.value = true
+      await persistDict()
+    } catch {
+      dirty.value = true      // 存失败，标记未落盘并退出，避免失败死循环
+      break
+    }
+  }
+  saving.value = false
+  savingInflight = false
+}
+
+// 关闭前把还没落盘的改动彻底存完（含在途的那次）
+async function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+  doSave()
+  while (savingInflight) {
+    await new Promise((r) => setTimeout(r, 40))
+  }
+}
 
 function blankForm() {
   return {
@@ -217,30 +312,56 @@ function blankForm() {
     intl_shipping_amount: null, intl_shipping_currency: 'JPY',
     domestic_shipping_amount: null, domestic_shipping_currency: 'CNY',
     sale_date: null, sale_amount: null, sale_currency: 'CNY',
-    status: 'purchased', note: null,
-    purchase_fx_rate: null, sale_fx_rate: null
+    fund_source: 'own',
+    status: 'purchased', note: null
+    // 汇率一律按日期自动获取，不再手工填写
   }
 }
 
 const form = reactive(blankForm())
 
+// 必须放在 form 声明之后：const 有暂时性死区，写在前面会在 setup 里直接抛
+// ReferenceError，整个弹窗连同它所在的页面一起挂掉
+watch(form, scheduleAutoSave, { deep: true })
+
 watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
+    // 填充表单期间关掉自动保存，避免刚打开就把预填值当成用户改动存一遍
+    formReady.value = false
+    dirty.value = false
+    savedOnce.value = false
     fxPreview.purchase = null
     fxPreview.sale = null
+    savedMoney.value = props.card?.money || null
+    loadPoolSummary()
     // 型号独立于品牌，进弹窗就拉全量
     await loadModels()
     if (props.card) {
       Object.assign(form, blankForm(), normalize(props.card))
+      isDraft.value = false
     } else {
       Object.assign(form, blankForm())
+      // 立刻建一张草稿卡拿到 id：这样媒体上传区在新增时就能用，和编辑态完全一致。
+      // 建失败（后端不可用）时退回占位提示，保存时后端再补建。
       try {
-        const res = await cardsApi.nextMgmtNo()
-        form.mgmt_no = res.mgmt_no
-      } catch { /* 忽略，保存时后端会生成 */ }
+        const draft = await cardsApi.createDraft()
+        form.id = draft.id
+        form.mgmt_no = draft.mgmt_no
+        isDraft.value = true
+      } catch {
+        isDraft.value = false
+        try {
+          const res = await cardsApi.nextMgmtNo()
+          form.mgmt_no = res.mgmt_no
+        } catch { /* 忽略，保存时后端会生成编号 */ }
+      }
     }
+    // 等填充引起的那波 watch 冲刷完，再开启自动保存
+    await nextTick()
+    dirty.value = false
+    formReady.value = true
   }
 )
 
@@ -272,35 +393,6 @@ async function previewFx(which) {
   }
 }
 
-async function onSave() {
-  saving.value = true
-  try {
-    const payload = { ...form }
-    delete payload.mgmt_no
-    let result
-    if (isEdit.value) {
-      result = await cardsApi.update(form.id, payload)
-    } else {
-      result = await cardsApi.create(payload)
-      // 新建成功后把 id / 编号回填，切到编辑态，用户可以接着上传图片
-      form.id = result.id
-      form.mgmt_no = result.mgmt_no
-    }
-    // 现敲的品牌/型号落库，下次进下拉能选到
-    await persistDict()
-    if (result.warnings?.length) {
-      result.warnings.forEach((w) => ElMessage.warning(w))
-    } else {
-      ElMessage.success(t('common.saved'))
-    }
-    emit('saved', result)
-  } catch {
-    // 拦截器已提示
-  } finally {
-    saving.value = false
-  }
-}
-
 async function persistDict() {
   // 品牌只在「系统配置」里手动维护，这里**不**把卡片上现敲的品牌写进字典；
   // 卡片仍照常保存该品牌文本，只是不污染品牌清单。
@@ -312,12 +404,39 @@ async function persistDict() {
   } catch { /* 字典写入失败不影响卡片本身 */ }
 }
 
-function onClosed() {
+async function onClosed() {
+  formReady.value = false
+  // 关闭前把最后一次未落盘的改动彻底存掉（防抖还没触发、或在途保存还没结束就点了外面关掉）
+  if (form.id && (dirty.value || savingInflight)) {
+    await flushSave()
+  }
+  // 仍是草稿（整个过程没输入任何东西、从没存过）→ 删掉这张空草稿卡连同已传的图，
+  // 免得留下没内容的废卡。已存过则 isDraft 为 false，转而通知列表刷新一次。
+  if (isDraft.value && form.id) {
+    const draftId = form.id
+    isDraft.value = false
+    try {
+      await cardsApi.remove(draftId, true)
+    } catch { /* 删草稿失败就算了，不打扰用户 */ }
+  } else if (form.id) {
+    emit('saved', { id: form.id })
+  }
   models.value = []
+  form.id = null
+  dirty.value = false
+  savedOnce.value = false
 }
 </script>
 
 <style scoped>
+/* 标题栏：左标题 + 右侧自动保存状态 */
+.dialog-header { display: flex; align-items: center; justify-content: space-between; padding-right: 20px; }
+.dialog-title { font-size: 16px; font-weight: 600; color: #e6edf7; }
+.autosave { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #6f7b8e; }
+.autosave.active { color: #8fb8ff; }
+.autosave .spin { animation: dc-spin 0.9s linear infinite; }
+@keyframes dc-spin { to { transform: rotate(360deg); } }
+
 /* overflow-x:hidden 干掉横向滚动条：顶部标签布局下每个控件都满宽，之前那条横条
    来自左标签 + 定宽控件挤不下时的溢出，改顶标签后不再需要横向滚动 */
 .card-form { max-height: 66vh; overflow-y: auto; overflow-x: hidden; padding-right: 8px; }
@@ -351,6 +470,11 @@ function onClosed() {
   background: rgba(91, 140, 255, 0.08);
   border-radius: 6px;
 }
+.pool-row { display: flex; align-items: center; gap: 10px; margin: -2px 0 10px; flex-wrap: wrap; }
+.pool-label { font-size: 13px; color: #c7d0de; }
+.pool-balance { font-size: 12px; }
+.pool-hint { line-height: 1.7; }
+.pool-warn { color: #e6a23c; }
 .manual-fx { margin-bottom: 12px; border: none; }
 .manual-fx :deep(.el-collapse-item__header),
 .manual-fx :deep(.el-collapse-item__wrap) { background: transparent; border: none; }

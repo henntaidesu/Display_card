@@ -34,6 +34,12 @@
             <div class="kv"><span>{{ t('card.purchaseAmount') }}</span><b>{{ money(card.purchase_amount, card.purchase_currency) }}</b></div>
             <div class="kv"><span>{{ t('card.intlShipping') }}</span><b>{{ money(card.intl_shipping_amount, card.intl_shipping_currency) }}</b></div>
             <div class="kv"><span>{{ t('card.purchaseFx') }}</span><b class="dc-mono">{{ card.purchase_fx_rate ? formatRate(card.purchase_fx_rate) : '—' }}<span class="dc-dim" v-if="card.purchase_fx_date"> · {{ card.purchase_fx_date }}</span></b></div>
+            <div class="kv"><span>{{ t('card.fundSource') }}</span>
+              <b>
+                {{ card.fund_source === 'pool' ? t('card.fundPool') : t('card.fundOwn') }}
+                <span v-if="card.fund_source === 'pool' && card.money.pool_fx_rate" class="dc-dim dc-mono"> · {{ formatRate(card.money.pool_fx_rate) }}</span>
+              </b>
+            </div>
             <el-divider />
             <div class="kv"><span>{{ t('card.saleDate') }}</span><b>{{ card.sale_date || '—' }}</b></div>
             <div class="kv"><span>{{ t('card.saleAmount') }}</span><b>{{ money(card.sale_amount, card.sale_currency) }}</b></div>
@@ -52,6 +58,33 @@
             </div>
             <div class="profit-row"><span>{{ t('card.margin') }}</span><b class="dc-mono">{{ card.money.profit_margin === null ? '—' : card.money.profit_margin + '%' }}</b></div>
             <el-alert v-if="card.money.incomplete" :title="t('card.incomplete')" type="warning" :closable="false" show-icon class="mt" />
+          </el-card>
+
+          <!-- 资金池分摊：这张卡的日元是从哪几批注资里出的，各按什么汇率折成人民币 -->
+          <el-card v-if="card.fund_draws?.length" shadow="never" class="pool-card">
+            <template #header>
+              <div class="pool-head">
+                <span>{{ t('funds.poolBreakdown') }}</span>
+                <router-link to="/funds" class="link">{{ t('route.funds') }} ↗</router-link>
+              </div>
+            </template>
+            <div v-for="d in card.fund_draws" :key="d.id" class="pool-draw">
+              <div class="pool-draw-head">
+                <span>{{ t('funds.cat.' + d.category) }}</span>
+                <b class="dc-mono">{{ money(d.amount, 'JPY') }} → {{ cny(d.cny_amount) }}</b>
+              </div>
+              <div v-for="(a, i) in d.allocations" :key="i" class="pool-alloc">
+                <span class="dc-dim dc-mono">{{ a.inject_date }}</span>
+                <span class="dc-mono">{{ money(a.amount, 'JPY') }}</span>
+                <span class="dc-dim">÷ {{ formatRate(a.fx_rate) }} =</span>
+                <span class="dc-mono">{{ cny(a.cny_amount) }}</span>
+              </div>
+              <div v-if="d.shortfall" class="pool-alloc short">
+                <span>{{ t('funds.shortfall') }}</span>
+                <span class="dc-mono">{{ money(d.shortfall, 'JPY') }}</span>
+                <span class="dc-dim">{{ t('funds.shortfallHint') }}</span>
+              </div>
+            </div>
           </el-card>
 
           <!-- 状态流转 -->
@@ -144,6 +177,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.pool-card { margin-top: 16px; }
+.pool-head { display: flex; align-items: center; justify-content: space-between; }
+.pool-draw { padding: 6px 0; border-bottom: 1px solid #1c2740; }
+.pool-draw:last-child { border-bottom: none; }
+.pool-draw-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #c7d0de; margin-bottom: 4px; }
+.pool-alloc { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #9aa6b8; padding: 2px 0 2px 10px; }
+.pool-alloc.short { color: #e6a23c; }
+.link { color: #8fb8ff; text-decoration: none; font-size: 12px; }
+.link:hover { text-decoration: underline; }
 .detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .mgmt { font-size: 13px; color: #8fb8ff; }

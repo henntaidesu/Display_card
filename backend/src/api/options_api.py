@@ -14,7 +14,15 @@ from pydantic import BaseModel, Field
 
 from src import db
 from src.auth import require_auth
-from src.schema import CARD_STATUSES, CURRENCIES, MEDIA_CATEGORIES, SOURCE_PLATFORMS
+from src.schema import (
+    CARD_STATUSES,
+    CURRENCIES,
+    FUND_DRAW_CATEGORIES,
+    FUND_SOURCES,
+    MEDIA_CATEGORIES,
+    POOL_CURRENCY,
+    SOURCE_PLATFORMS,
+)
 
 router = APIRouter(prefix="/options", tags=["options"], dependencies=[Depends(require_auth)])
 
@@ -38,6 +46,9 @@ def enums():
         "media_categories": MEDIA_CATEGORIES,
         "source_platforms": SOURCE_PLATFORMS,
         "currencies": CURRENCIES,
+        "fund_sources": FUND_SOURCES,
+        "fund_draw_categories": FUND_DRAW_CATEGORIES,
+        "pool_currency": POOL_CURRENCY,
     }
 
 

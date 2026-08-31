@@ -27,6 +27,7 @@ CARD_STATUSES: List[str] = [
     "test_passed",    # 测试通过
     "test_failed",    # 测试不通过
     "returning",      # 回国中
+    "returned",       # 已回国
     "forwarding",     # 转寄中
     "received",       # 已签收（买家）
     "paid",           # 已打款（买家）
@@ -44,6 +45,18 @@ MEDIA_CATEGORIES: List[str] = [
 SOURCE_PLATFORMS: List[str] = ["yahoo", "mercari", "other"]
 
 CURRENCIES: List[str] = ["JPY", "CNY"]
+
+# 资金池只装日元：它模拟的是「先把人民币换成日元放在日本的账户里，再用这笔日元买卡」，
+# 人民币不需要进池（rate 恒等于 1，进了池只会让 FIFO 里多一堆无意义的批次）。
+POOL_CURRENCY: str = "JPY"
+
+# 一张卡的采购资金从哪来。own = 自有资金（按交易日牌价折算，老逻辑）；
+# pool = 从资金池扣，成本按被消耗的那几笔注资各自的汇率分段折算。
+FUND_SOURCES: List[str] = ["own", "pool"]
+
+# 资金池扣款的用途。purchase / intl_shipping 两类由卡片自动同步（跟着卡上的金额走），
+# other 是手工记的池内杂项支出（手续费、代购费…），不计入任何一张卡的成本。
+FUND_DRAW_CATEGORIES: List[str] = ["purchase", "intl_shipping", "other"]
 
 
 # ── 表定义 ──────────────────────────────────────────────────────────────── #
@@ -143,14 +156,27 @@ _TABLES: List[Tuple[str, str]] = [
             sale_fx_date     DATE NULL,
             fx_manual        TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=汇率被手工改过，自动刷新时跳过',
 
+            -- 采购资金从哪来。'own' 走 purchase_fx_rate（老逻辑）；'pool' 则由
+            -- fund_draws / fund_allocations 按注资批次的汇率分段算出成本。
+            fund_source VARCHAR(8) NOT NULL DEFAULT 'own',
+            -- 下面三列是资金池分摊的**结果快照**，由 funds.rebuild() 统一回写。
+            -- 冗余在卡片行上是为了让列表/统计不必为每一行再查一次分摊明细（N+1）。
+            pool_purchase_cny DECIMAL(14,2) NULL COMMENT '购入价按各注资批次汇率折算后的人民币合计',
+            pool_intl_cny     DECIMAL(14,2) NULL COMMENT '国际运费按各注资批次汇率折算后的人民币合计',
+            pool_fx_rate      DECIMAL(18,8) NULL COMMENT '这张卡实际吃到的加权汇率，仅供展示',
+
             status     VARCHAR(24) NOT NULL DEFAULT 'purchased',
             note       TEXT NULL,
+            -- 草稿卡：新增弹窗一打开就先建一张（好让图片能立刻挂上去），保存即转 0。
+            -- 列表、统计一律只算 is_draft=0；未保存就关掉的草稿会被清理掉。
+            is_draft   TINYINT(1) NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                            ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY uk_cards_mgmt_no (mgmt_no),
             KEY idx_cards_status (status),
+            KEY idx_cards_is_draft (is_draft),
             KEY idx_cards_purchase_date (purchase_date),
             KEY idx_cards_sale_date (sale_date),
             KEY idx_cards_serial (serial_no)
@@ -215,6 +241,81 @@ _TABLES: List[Tuple[str, str]] = [
                    既省接口调用，也保证断网时历史数据照样算得出来'
         """,
     ),
+    (
+        "fund_injections",
+        """
+        CREATE TABLE IF NOT EXISTS fund_injections (
+            id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            inject_date DATE NOT NULL COMMENT '这笔钱进池的日期，也是 FIFO 的排序依据',
+            amount      DECIMAL(16,2) NOT NULL COMMENT '注入的日元金额',
+            currency    VARCHAR(3) NOT NULL DEFAULT 'JPY',
+            -- 换汇当时的汇率快照：1 人民币 = fx_rate 日元。这笔钱之后被谁用掉，
+            -- 都按这个汇率折人民币成本 —— 池子里的钱是「已经用这个价换进来的」，
+            -- 用它的那天市场价是多少与真实成本无关。
+            fx_rate     DECIMAL(18,8) NULL,
+            fx_date     DATE NULL COMMENT '实际取到的牌价日（非交易日会回退）',
+            fx_manual   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=汇率手工填写（真实换汇价），不自动覆盖',
+            channel     VARCHAR(64) NULL COMMENT '换汇渠道，如 银行电汇 / Wise，仅备注用',
+            note        VARCHAR(500) NULL,
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_fund_injections_date (inject_date, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          COMMENT='资金池注资批次。每次换汇进池一条，各自带自己那天的汇率'
+        """,
+    ),
+    (
+        "fund_draws",
+        """
+        CREATE TABLE IF NOT EXISTS fund_draws (
+            id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            card_id    INT UNSIGNED NULL COMMENT '归属卡片；NULL 表示与卡无关的池内支出',
+            category   VARCHAR(24) NOT NULL DEFAULT 'purchase'
+                           COMMENT 'purchase / intl_shipping 由卡片自动同步；other 为手工记账',
+            draw_date  DATE NOT NULL COMMENT '花钱的日期，决定它能吃到哪些批次（只能用已经进池的钱）',
+            amount     DECIMAL(16,2) NOT NULL COMMENT '扣掉的日元金额',
+            currency   VARCHAR(3) NOT NULL DEFAULT 'JPY',
+            note       VARCHAR(500) NULL,
+            -- 下面三列是 FIFO 分摊的结果，由 funds.rebuild() 回写：
+            cny_amount DECIMAL(14,2) NULL COMMENT '折算后的人民币成本合计；NULL=有分段折不出来',
+            shortfall  DECIMAL(16,2) NOT NULL DEFAULT 0 COMMENT '池子不够、没吃到注资的日元部分',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                           ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_fund_draws_date (draw_date, id),
+            UNIQUE KEY uk_fund_draws_card_cat (card_id, category),
+            CONSTRAINT fk_fund_draws_card FOREIGN KEY (card_id)
+                REFERENCES cards (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          COMMENT='从资金池扣款。卡片侧的两类跟着卡上的金额自动同步，删卡即级联删除'
+        """,
+    ),
+    (
+        "fund_allocations",
+        """
+        CREATE TABLE IF NOT EXISTS fund_allocations (
+            id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            draw_id      INT UNSIGNED NOT NULL,
+            injection_id INT UNSIGNED NOT NULL,
+            seq          INT NOT NULL DEFAULT 0 COMMENT '同一笔扣款内的分段顺序',
+            amount       DECIMAL(16,2) NOT NULL COMMENT '这一段从该批次吃掉的日元',
+            fx_rate      DECIMAL(18,8) NULL COMMENT '该批次的汇率快照（冗余，便于直接展示）',
+            cny_amount   DECIMAL(14,2) NULL COMMENT 'amount / fx_rate；批次缺汇率时为 NULL',
+            PRIMARY KEY (id),
+            KEY idx_fund_alloc_draw (draw_id, seq),
+            KEY idx_fund_alloc_injection (injection_id),
+            CONSTRAINT fk_fund_alloc_draw FOREIGN KEY (draw_id)
+                REFERENCES fund_draws (id) ON DELETE CASCADE,
+            CONSTRAINT fk_fund_alloc_injection FOREIGN KEY (injection_id)
+                REFERENCES fund_injections (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+          COMMENT='一笔扣款按 FIFO 拆到各注资批次上的明细。全量派生数据，
+                   任何注资/扣款变动后由 funds.rebuild() 整体重算'
+        """,
+    ),
 ]
 
 
@@ -229,6 +330,11 @@ _MIGRATIONS: List[Tuple[str, str, str]] = [
     ("users", "is_admin", "is_admin TINYINT(1) NOT NULL DEFAULT 0"),
     ("users", "token_version", "token_version INT UNSIGNED NOT NULL DEFAULT 0"),
     ("users", "last_active_at", "last_active_at DATETIME NULL"),
+    ("cards", "is_draft", "is_draft TINYINT(1) NOT NULL DEFAULT 0"),
+    ("cards", "fund_source", "fund_source VARCHAR(8) NOT NULL DEFAULT 'own'"),
+    ("cards", "pool_purchase_cny", "pool_purchase_cny DECIMAL(14,2) NULL"),
+    ("cards", "pool_intl_cny", "pool_intl_cny DECIMAL(14,2) NULL"),
+    ("cards", "pool_fx_rate", "pool_fx_rate DECIMAL(18,8) NULL"),
 ]
 
 
@@ -286,7 +392,31 @@ def init() -> None:
     for table, column, ddl in _MIGRATIONS:
         _ensure_column(table, column, ddl)
     _migrate_gpu_models_standalone()
+    _cleanup_stale_drafts()
     _seed()
+
+
+def _cleanup_stale_drafts() -> None:
+    """清掉超过 2 小时没定稿的草稿卡。
+
+    正常流程里草稿要么保存（转正）、要么关弹窗时被删；只有「开了新增弹窗又直接关掉浏览器」
+    才会残留。2 小时的阈值保证正在编辑中的草稿（刚建几秒）不会被误删，即使期间热重载了。
+    连带 card_media 由外键级联删除；图床上的文件成孤儿（可接受，仅占空间）。
+    """
+    try:
+        removed = db.execute(
+            "DELETE FROM cards WHERE is_draft = 1 AND created_at < (NOW() - INTERVAL 2 HOUR)"
+        )
+        if removed:
+            log.info("清理了 %d 张过期草稿卡", removed)
+            # 草稿上若开过「从资金池扣除」，它的扣款刚被外键连带删掉了：重算一次，
+            # 把那笔钱还给池子，后面的扣款也才吃得到。在函数里 import 是为了避开
+            # funds → schema 的循环依赖。
+            from src import funds
+
+            funds.rebuild()
+    except Exception as exc:  # noqa: BLE001  清理失败不该拖垮启动
+        log.warning("清理草稿卡失败：%s", exc)
 
 
 def _seed() -> None:

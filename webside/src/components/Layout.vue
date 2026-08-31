@@ -81,6 +81,7 @@ const locale = currentLocale
 const menuItems = [
   { path: '/dashboard', titleKey: 'route.dashboard', icon: 'Odometer' },
   { path: '/cards', titleKey: 'route.cards', icon: 'Cpu' },
+  { path: '/funds', titleKey: 'route.funds', icon: 'Wallet' },
   { path: '/fx', titleKey: 'route.fx', icon: 'TrendCharts' },
   { path: '/settings', titleKey: 'route.settings', icon: 'Setting' }
 ]

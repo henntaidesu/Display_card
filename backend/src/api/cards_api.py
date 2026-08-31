@@ -10,9 +10,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from src import cards, db
+from src import cards, db, funds
 from src.auth import require_auth
-from src.schema import CARD_STATUSES, CURRENCIES, SOURCE_PLATFORMS
+from src.schema import CARD_STATUSES, CURRENCIES, FUND_SOURCES, SOURCE_PLATFORMS
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ _WRITABLE = [
     "intl_shipping_amount", "intl_shipping_currency",
     "domestic_shipping_amount", "domestic_shipping_currency",
     "sale_date", "sale_amount", "sale_currency",
+    "fund_source",
     "status", "note",
 ]
 
@@ -55,6 +56,10 @@ class CardPayload(BaseModel):
     sale_amount: Optional[float] = Field(default=None, ge=0)
     sale_currency: str = "CNY"
 
+    # 采购资金来源：own = 自有资金；pool = 从资金池扣。选 pool 后这张卡的日元支出会
+    # 在资金池里生成对应扣款，成本改由被消耗的注资批次的汇率分段折算。
+    fund_source: str = "own"
+
     status: str = "purchased"
     note: Optional[str] = None
 
@@ -77,6 +82,14 @@ class CardPayload(BaseModel):
         v = (v or "purchased").strip()
         if v not in CARD_STATUSES:
             raise ValueError(f"未知状态：{v}")
+        return v
+
+    @field_validator("fund_source")
+    @classmethod
+    def _check_fund_source(cls, v: str) -> str:
+        v = (v or "own").strip().lower()
+        if v not in FUND_SOURCES:
+            raise ValueError(f"资金来源只能是 {' / '.join(FUND_SOURCES)}")
         return v
 
     @field_validator("source_platform")
@@ -130,22 +143,18 @@ def _apply_fx(payload: CardPayload) -> Dict[str, Any]:
     }
 
 
-@router.get("")
-def list_cards(
-    keyword: Optional[str] = Query(default=None, description="型号/品牌/序列号/编号/卖家 模糊匹配"),
-    status: Optional[str] = Query(default=None),
-    brand: Optional[str] = Query(default=None),
-    source_platform: Optional[str] = Query(default=None),
-    purchase_from: Optional[dt.date] = Query(default=None),
-    purchase_to: Optional[dt.date] = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=200),
-    sort_by: str = Query(default="created_at"),
-    sort_dir: str = Query(default="desc"),
-):
-    where: List[str] = []
+def _list_filters(
+    keyword: Optional[str],
+    status: Optional[str],
+    brand: Optional[str],
+    source_platform: Optional[str],
+    purchase_from: Optional[dt.date],
+    purchase_to: Optional[dt.date],
+) -> tuple[str, List[Any]]:
+    """把列表筛选条件拼成 WHERE 子句。列表和顶部统计共用这一份，保证两者口径一致。"""
+    # 草稿卡（新增弹窗里刚建、还没保存的空卡）一律不算
+    where: List[str] = ["is_draft = 0"]
     params: List[Any] = []
-
     if keyword:
         like = f"%{keyword.strip()}%"
         where.append(
@@ -171,8 +180,70 @@ def list_cards(
     if purchase_to:
         where.append("purchase_date <= %s")
         params.append(purchase_to)
+    return " WHERE " + " AND ".join(where), params
 
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+@router.get("/stats")
+def stats(
+    keyword: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
+    source_platform: Optional[str] = Query(default=None),
+    purchase_from: Optional[dt.date] = Query(default=None),
+    purchase_to: Optional[dt.date] = Query(default=None),
+):
+    """顶部统计：对**当前筛选下的全部卡**（不只当前页）做汇总。
+
+    金额一律在 Python 侧用 cards.compute_money 算，和详情/概览同一套规则（缺汇率不当 0）。
+    """
+    where_sql, params = _list_filters(keyword, status, brand, source_platform, purchase_from, purchase_to)
+    rows = db.query(f"SELECT * FROM cards{where_sql}", params)
+
+    cost_values, revenue_values, profit_values = [], [], []
+    sold = 0
+    incomplete = 0
+    for row in rows:
+        money = cards.compute_money(row)
+        if money["incomplete"]:
+            incomplete += 1
+        cost_values.append(money["cost_total_cny"])
+        if row["status"] in cards.SOLD_STATUSES or row.get("sale_amount") is not None:
+            sold += 1
+            revenue_values.append(money["sale_cny"])
+            profit_values.append(money["profit_cny"])
+
+    def _sum(vals):
+        return round(sum(v for v in vals if v is not None), 2)
+
+    total_revenue = _sum(revenue_values)
+    total_profit = _sum(profit_values)
+    return {
+        "total": len(rows),
+        "in_stock": len(rows) - sold,
+        "sold": sold,
+        "total_cost_cny": _sum(cost_values),
+        "total_revenue_cny": total_revenue,
+        "total_profit_cny": total_profit,
+        "avg_profit_cny": round(total_profit / sold, 2) if sold else None,
+        "profit_margin": round(total_profit / total_revenue * 100, 2) if total_revenue else None,
+        "incomplete": incomplete,
+    }
+
+
+@router.get("")
+def list_cards(
+    keyword: Optional[str] = Query(default=None, description="型号/品牌/序列号/编号/卖家 模糊匹配"),
+    status: Optional[str] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
+    source_platform: Optional[str] = Query(default=None),
+    purchase_from: Optional[dt.date] = Query(default=None),
+    purchase_to: Optional[dt.date] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
+):
+    where_sql, params = _list_filters(keyword, status, brand, source_platform, purchase_from, purchase_to)
 
     # 排序列走白名单。直接把 sort_by 拼进 SQL 是注入口子，而 ORDER BY 又没法用占位符。
     sort_whitelist = {
@@ -206,6 +277,8 @@ def get_card(card_id: int):
         raise HTTPException(status_code=404, detail="显卡不存在")
     media = cards.load_media([card_id]).get(card_id, [])
     data = cards.serialize(row, media)
+    # 走资金池的卡要能看到「这笔钱是从哪几批注资里出的、各按什么汇率折的」
+    data["fund_draws"] = funds.card_draws(card_id) if cards.uses_pool(row) else []
     data["status_logs"] = [
         {
             "from_status": log_row["from_status"],
@@ -220,6 +293,21 @@ def get_card(card_id: int):
         )
     ]
     return data
+
+
+@router.post("/draft")
+def create_draft():
+    """建一张空草稿卡，只为拿到 id 和管理编号——新增弹窗一打开就调它，好让图片能立刻上传。
+
+    草稿不进列表也不进统计（is_draft=1）。用户点保存会走 update 把它转正；直接关弹窗则由
+    前端删掉它，残留的（关浏览器等）由启动时的 _cleanup_stale_drafts 兜底清理。
+    """
+    mgmt_no = cards.next_mgmt_no()
+    card_id = db.insert(
+        "INSERT INTO cards (mgmt_no, status, is_draft) VALUES (%s, 'purchased', 1)",
+        (mgmt_no,),
+    )
+    return {"id": card_id, "mgmt_no": mgmt_no}
 
 
 @router.post("")
@@ -239,6 +327,8 @@ def create_card(payload: CardPayload):
         [values[c] for c in columns],
     )
     cards.log_status(card_id, None, values["status"], "创建")
+    # 先同步资金池扣款再读回：分摊结果是写在卡片行上的，读早了成本还是空的
+    funds.sync_card_and_rebuild(card_id)
     row = db.query_one("SELECT * FROM cards WHERE id = %s", (card_id,))
     result = cards.serialize(row, [])
     result["warnings"] = fx["warnings"]
@@ -255,6 +345,8 @@ def update_card(card_id: int, payload: CardPayload):
     values = {name: _clean(getattr(payload, name)) for name in _WRITABLE}
     values.update({k: fx[k] for k in
                    ("purchase_fx_rate", "purchase_fx_date", "sale_fx_rate", "sale_fx_date", "fx_manual")})
+    # 一旦保存就转正：草稿变正式卡，从此进列表与统计
+    values["is_draft"] = 0
 
     db.execute(
         "UPDATE cards SET {sets} WHERE id = %s".format(
@@ -263,6 +355,7 @@ def update_card(card_id: int, payload: CardPayload):
         list(values.values()) + [card_id],
     )
     cards.log_status(card_id, existing["status"], values["status"], "编辑")
+    funds.sync_card_and_rebuild(card_id)
     row = db.query_one("SELECT * FROM cards WHERE id = %s", (card_id,))
     media = cards.load_media([card_id]).get(card_id, [])
     result = cards.serialize(row, media)
@@ -345,5 +438,12 @@ def delete_card(card_id: int, purge_media: bool = Query(default=False)):
                     log.warning("删除图床文件 %s 失败：%s", name, exc)
                     failed += 1
 
+    had_draws = bool(db.query_one("SELECT id FROM fund_draws WHERE card_id = %s", (card_id,)))
     db.execute("DELETE FROM cards WHERE id = %s", (card_id,))
+    # 卡上的扣款由外键级联删掉了，池子余额和其余扣款的分摊都得跟着重算
+    if had_draws:
+        try:
+            funds.rebuild()
+        except Exception as exc:  # noqa: BLE001  重算失败不该让删除本身失败
+            log.warning("删卡后重算资金池失败：%s", exc)
     return {"ok": True, "media_purged": purged, "media_failed": failed}

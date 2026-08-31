@@ -2,21 +2,23 @@
 
 // 状态对应的 Element tag 主题色。测试不通过用 danger，成交类用 success，
 // 中间流转用 info/warning，让列表扫一眼就能分出「出问题的」和「快到手的」。
+// 只有「已打款」（生意最终完成）用绿色；其余状态一律不用绿色。
 export const STATUS_TAG_TYPE = {
   purchased: 'info',
   pending_test: 'warning',
-  test_passed: 'success',
+  test_passed: 'primary',
   test_failed: 'danger',
   returning: 'primary',
-  forwarding: 'primary',
-  received: 'success',
+  returned: 'primary',
+  forwarding: 'warning',
+  received: 'warning',
   paid: 'success'
 }
 
 // 状态在流程里的先后，用于按流程排序而不是字母序
 export const STATUS_ORDER = [
   'purchased', 'pending_test', 'test_passed', 'test_failed',
-  'returning', 'forwarding', 'received', 'paid'
+  'returning', 'returned', 'forwarding', 'received', 'paid'
 ]
 
 export function currencySymbol(code) {

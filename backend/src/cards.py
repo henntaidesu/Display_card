@@ -13,6 +13,12 @@
 汇率一旦取到就**写死在卡片行里**（purchase_fx_rate / sale_fx_rate），之后再也不重算。
 不快照的话，同一张卡今天算出来的利润和昨天不一样——汇率每天都在动，而已经发生的
 交易的盈亏是不会变的。要改只能显式改（fx_manual=1，自动刷新会跳过它）。
+
+**资金池例外**（fund_source='pool'）：这张卡的日元是从资金池里出的，那它的人民币成本
+就不是「金额 ÷ 买卡那天的牌价」，而是「被吃掉的那几批注资，各按各自的换汇价折算再
+相加」——钱早就换好了，买卡那天的市场价与真实成本无关。分摊结果由 src.funds 算好后
+回写在 pool_purchase_cny / pool_intl_cny 上，这里直接取用。出售侧不受影响：卖卡收的是
+人民币，仍走 sale_fx_rate。
 """
 
 from __future__ import annotations
@@ -128,6 +134,24 @@ def _round(value: Optional[Decimal]) -> Optional[float]:
     return float(value.quantize(_CENT, rounding=ROUND_HALF_UP))
 
 
+def uses_pool(row: Dict[str, Any]) -> bool:
+    return (row.get("fund_source") or "own") == "pool"
+
+
+def _purchase_side(
+    row: Dict[str, Any], amount_key: str, currency_key: str, pool_key: str, rate: Any
+) -> Optional[Decimal]:
+    """采购侧的一笔支出折人民币：走资金池的用分摊结果，否则按牌价折算。
+
+    只有**日元**支出才可能走资金池（池子里装的是日元）；同一张卡上如果某项直接以
+    人民币支付，那项照旧原样计入。分摊结果为 None（注资缺汇率 / 还没重算）时这里
+    也返回 None，让它按「缺汇率」处理——总比拿市场牌价冒充真实换汇成本强。
+    """
+    if uses_pool(row) and (row.get(currency_key) or "").upper() == "JPY":
+        return _dec(row.get(pool_key))
+    return _to_cny(row.get(amount_key), row.get(currency_key), rate)
+
+
 def compute_money(row: Dict[str, Any]) -> Dict[str, Any]:
     """算出这张卡的成本、收入、利润（全部折成人民币）。
 
@@ -137,8 +161,8 @@ def compute_money(row: Dict[str, Any]) -> Dict[str, Any]:
     p_rate = row.get("purchase_fx_rate")
     s_rate = row.get("sale_fx_rate")
 
-    purchase = _to_cny(row.get("purchase_amount"), row.get("purchase_currency"), p_rate)
-    intl = _to_cny(row.get("intl_shipping_amount"), row.get("intl_shipping_currency"), p_rate)
+    purchase = _purchase_side(row, "purchase_amount", "purchase_currency", "pool_purchase_cny", p_rate)
+    intl = _purchase_side(row, "intl_shipping_amount", "intl_shipping_currency", "pool_intl_cny", p_rate)
     domestic = _to_cny(row.get("domestic_shipping_amount"), row.get("domestic_shipping_currency"), s_rate)
     revenue = _to_cny(row.get("sale_amount"), row.get("sale_currency"), s_rate)
 
@@ -181,7 +205,15 @@ def compute_money(row: Dict[str, Any]) -> Dict[str, Any]:
         "profit_margin": margin,
         # 缺汇率导致算不出来时前端要显示提示，而不是一个空白格子
         "incomplete": cost_incomplete or (has_revenue and revenue_missing),
+        # 采购成本是按资金池的注资汇率算的（前端据此标注，别让人以为用的是当日牌价）
+        "from_pool": uses_pool(row),
+        "pool_fx_rate": _round_rate(row.get("pool_fx_rate")),
     }
+
+
+def _round_rate(value: Any) -> Optional[float]:
+    value = _dec(value)
+    return float(value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)) if value is not None else None
 
 
 # ── 序列化 ──────────────────────────────────────────────────────────────── #
@@ -209,10 +241,12 @@ def serialize(row: Dict[str, Any], media: Optional[List[Dict[str, Any]]] = None)
         "purchase_amount", "intl_shipping_amount",
         "domestic_shipping_amount", "sale_amount",
         "purchase_fx_rate", "sale_fx_rate",
+        "pool_purchase_cny", "pool_intl_cny", "pool_fx_rate",
     ):
         value = row.get(key)
         out[key] = float(value) if value is not None else None
     out["fx_manual"] = bool(row.get("fx_manual"))
+    out["fund_source"] = row.get("fund_source") or "own"
     out["money"] = compute_money(row)
     if media is not None:
         out["media"] = media

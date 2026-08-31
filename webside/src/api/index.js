@@ -8,8 +8,12 @@ export const authApi = {
 
 export const cardsApi = {
   list: (params) => http.get('/cards', { params }),
+  // 顶部统计：对当前筛选下的全部卡做汇总（同一套筛选参数）
+  stats: (params) => http.get('/cards/stats', { params }),
   get: (id) => http.get(`/cards/${id}`),
   create: (payload) => http.post('/cards', payload),
+  // 新增弹窗打开即建的空草稿卡，只为拿到 id，好让图片立刻能传
+  createDraft: () => http.post('/cards/draft'),
   update: (id, payload) => http.put(`/cards/${id}`, payload),
   changeStatus: (id, payload) => http.patch(`/cards/${id}/status`, payload),
   refreshFx: (id) => http.post(`/cards/${id}/refresh-fx`),
@@ -32,6 +36,22 @@ export const fxApi = {
   refresh: (params) => http.post('/fx/refresh', null, { params }),
   getConfig: () => http.get('/fx/config'),
   setConfig: (params) => http.put('/fx/config', null, { params })
+}
+
+// 资金池：注资、扣款与 FIFO 分摊。写操作的响应里直接带回重算后的总账与两张明细表，
+// 前端拿到就能整页刷新，不必再补一次 GET。
+export const fundsApi = {
+  overview: () => http.get('/funds'),
+  summary: () => http.get('/funds/summary'),
+  injections: () => http.get('/funds/injections'),
+  createInjection: (payload) => http.post('/funds/injections', payload),
+  updateInjection: (id, payload) => http.put(`/funds/injections/${id}`, payload),
+  removeInjection: (id) => http.delete(`/funds/injections/${id}`),
+  draws: (params) => http.get('/funds/draws', { params }),
+  createDraw: (payload) => http.post('/funds/draws', payload),
+  updateDraw: (id, payload) => http.put(`/funds/draws/${id}`, payload),
+  removeDraw: (id) => http.delete(`/funds/draws/${id}`),
+  rebuild: () => http.post('/funds/rebuild')
 }
 
 export const optionsApi = {
